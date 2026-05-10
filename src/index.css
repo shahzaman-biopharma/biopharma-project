@@ -237,96 +237,103 @@
 .bot-markdown li > ul,
 .bot-markdown li > ol { margin: 0.25rem 0 0.25rem 1rem; }
 
-/* ── TABLE — ChatGPT-style, full borders, mobile horizontal scroll ── */
+/* ── TABLE — exact match to reference HTML, dark theme ── */
 .bot-table-wrap {
   width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  margin: 0.85rem 0;
-  border-radius: 10px;
-  border: 1px solid rgba(51, 65, 85, 0.7);
+  margin: 0.85rem 0 0.3rem;
+  border-radius: 8px;
+  border: 1px solid rgba(71,85,105,0.5);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  background: rgba(13,20,38,0.7);
   scrollbar-width: thin;
-  scrollbar-color: rgba(59,130,246,0.35) rgba(15,23,42,0.3);
+  scrollbar-color: rgba(59,130,246,0.45) rgba(13,20,38,0.4);
 }
-.bot-table-wrap::-webkit-scrollbar { height: 5px; }
-.bot-table-wrap::-webkit-scrollbar-track { background: rgba(15,23,42,0.3); border-radius: 5px; }
-.bot-table-wrap::-webkit-scrollbar-thumb { background: rgba(59,130,246,0.4); border-radius: 5px; }
+.bot-table-wrap::-webkit-scrollbar        { height: 5px; }
+.bot-table-wrap::-webkit-scrollbar-track  { background: rgba(13,20,38,0.4); }
+.bot-table-wrap::-webkit-scrollbar-thumb  { background: rgba(59,130,246,0.5); border-radius: 5px; }
+
+/* Scroll hint shown on mobile */
+.bot-scroll-hint {
+  text-align: center;
+  font-size: 11px;
+  margin-top: 3px;
+  color: var(--text-muted);
+  display: none;
+}
+@media (max-width: 768px) { .bot-scroll-hint { display: block; } }
 
 .bot-markdown table {
   width: 100%;
   min-width: max-content;
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: 13px;
   line-height: 1.5;
-  table-layout: auto;
 }
 
-/* Sticky header row */
-.bot-markdown thead tr {
-  background: rgba(10, 16, 36, 0.98);
-  position: sticky;
-  top: 0;
-  z-index: 2;
-}
+/* ── Header ── */
+.bot-markdown thead { background-color: #1e2d45; }
 
-/* Header cells */
 .bot-markdown th {
-  padding: 10px 16px;
+  padding: 10px 14px;
   text-align: left;
   font-weight: 600;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #7dd3fc;
+  font-size: 13px;
+  color: #e2e8f0;
   white-space: nowrap;
-  border-bottom: 1px solid rgba(59,130,246,0.45);
-  border-right: 1px solid rgba(51,65,85,0.5);
-  background: rgba(10,16,36,0.98);
+  border: 1px solid rgba(71,85,105,0.55);
+  vertical-align: top;
 }
-.bot-markdown th:last-child { border-right: none; }
 
-/* Data cells */
+/* ── Data cells ── */
 .bot-markdown td {
-  padding: 9px 16px;
-  border-bottom: 1px solid rgba(51,65,85,0.3);
-  border-right: 1px solid rgba(51,65,85,0.2);
-  color: var(--text-primary);
+  padding: 9px 14px;
+  border: 1px solid rgba(71,85,105,0.4);
+  text-align: left;
+  font-size: 13px;
+  vertical-align: top;
   white-space: nowrap;
-  vertical-align: middle;
-  font-size: 0.8rem;
-}
-.bot-markdown td:last-child { border-right: none; }
-.bot-markdown tbody tr:last-child td { border-bottom: none; }
-
-/* Zebra rows */
-.bot-markdown tbody tr:nth-child(odd)  { background: rgba(15,23,42,0.4); }
-.bot-markdown tbody tr:nth-child(even) { background: rgba(30,41,59,0.55); }
-
-/* Hover */
-.bot-markdown tbody tr:hover {
-  background: rgba(59,130,246,0.1);
-  transition: background 0.12s ease;
+  color: var(--text-primary);
 }
 
-/* ── Light theme tables ── */
+/* Last column wraps (for notes/remarks) */
+.bot-markdown th:last-child,
+.bot-markdown td:last-child {
+  white-space: normal;
+  min-width: 160px;
+}
+
+/* ── Zebra rows ── */
+.bot-markdown tbody tr:nth-child(even) { background-color: rgba(30,41,59,0.5); }
+.bot-markdown tbody tr:hover           { background-color: rgba(59,130,246,0.1); transition: background 0.15s; }
+
+/* ── Status badge colours ── */
+.bot-td-green  { color: #4ade80 !important; font-weight: 600; }
+.bot-td-red    { color: #f87171 !important; font-weight: 600; }
+.bot-td-yellow { color: #fbbf24 !important; font-weight: 600; }
+
+/* ── Mobile smaller font ── */
+@media (max-width: 768px) {
+  .bot-markdown th,
+  .bot-markdown td { font-size: 12px; padding: 8px 10px; }
+}
+
+/* ── Light theme ── */
 [data-theme="light"] .bot-table-wrap {
-  border-color: rgba(203,213,225,0.9);
-  scrollbar-color: rgba(59,130,246,0.3) rgba(241,245,249,0.5);
+  background: #ffffff;
+  border-color: #cfd8dc;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  scrollbar-color: rgba(59,130,246,0.3) #f0f4ff;
 }
-[data-theme="light"] .bot-markdown thead tr,
-[data-theme="light"] .bot-markdown th {
-  background: #f1f5f9;
-  color: #2563eb;
-  border-bottom-color: rgba(59,130,246,0.35);
-  border-right-color: rgba(203,213,225,0.7);
-}
-[data-theme="light"] .bot-markdown td {
-  border-bottom-color: rgba(226,232,240,0.8);
-  border-right-color: rgba(226,232,240,0.7);
-}
-[data-theme="light"] .bot-markdown tbody tr:nth-child(odd)  { background: #ffffff; }
-[data-theme="light"] .bot-markdown tbody tr:nth-child(even) { background: #f8fafc; }
-[data-theme="light"] .bot-markdown tbody tr:hover { background: rgba(59,130,246,0.06); }
+[data-theme="light"] .bot-markdown thead     { background-color: #2c3e50; }
+[data-theme="light"] .bot-markdown th        { color: #ffffff; border-color: rgba(71,85,105,0.35); }
+[data-theme="light"] .bot-markdown td        { border-color: #cfd8dc; color: #1e293b; }
+[data-theme="light"] .bot-markdown tbody tr:nth-child(even) { background-color: #f9fbfc; }
+[data-theme="light"] .bot-markdown tbody tr:hover            { background-color: #eaf4fb; }
+[data-theme="light"] .bot-td-green  { color: #1b7e34 !important; }
+[data-theme="light"] .bot-td-red    { color: #c0392b !important; }
+[data-theme="light"] .bot-td-yellow { color: #b45309 !important; }
 [data-theme="light"] .bot-markdown strong { color: #1e293b; }
 
 /* ── Code ── */

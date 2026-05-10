@@ -224,10 +224,24 @@ function ChatMessage({ msg }) {
               remarkPlugins={[remarkGfm]}
               components={{
                 table: ({ children }) => (
-                  <div className="bot-table-wrap">
-                    <table>{children}</table>
-                  </div>
+                  <>
+                    <div className="bot-table-wrap">
+                      <table>{children}</table>
+                    </div>
+                    <p className="bot-scroll-hint">← swipe to see more →</p>
+                  </>
                 ),
+                td: ({ children }) => {
+                  const text = typeof children === 'string' ? children.trim().toLowerCase() : '';
+                  const colors = {
+                    verified: 'bot-td-green', resolved: 'bot-td-green', complete: 'bot-td-green',
+                    pass: 'bot-td-green', passed: 'bot-td-green', yes: 'bot-td-green', active: 'bot-td-green',
+                    pending: 'bot-td-red', open: 'bot-td-red', failed: 'bot-td-red',
+                    critical: 'bot-td-red', missing: 'bot-td-red', no: 'bot-td-red', overdue: 'bot-td-red',
+                    'n/a': 'bot-td-yellow', partial: 'bot-td-yellow', review: 'bot-td-yellow', 'in progress': 'bot-td-yellow',
+                  };
+                  return <td className={colors[text] || undefined}>{children}</td>;
+                },
               }}
             >
               {msg.content}
