@@ -1,6 +1,6 @@
 'use strict';
 
-const { Telegraf } = require('telegraf');
+const { Telegraf, Input } = require('telegraf');
 const express      = require('express');
 const PDFDocument  = require('pdfkit');
 const ExcelJS      = require('exceljs');
@@ -367,6 +367,29 @@ async function getSessionsByDept(deptId) {
   return all.filter(s => s.currentDeptId === deptId && s.uid);
 }
 
+// ─── File send with Input.fromBuffer + retry on transient network errors ──────
+async function sendFile(ctx, buf, filename, caption) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await ctx.replyWithDocument(
+        Input.fromBuffer(buf, filename),
+        { caption, parse_mode: 'HTML' }
+      );
+      return;
+    } catch (err) {
+      const transient = err.message?.includes('socket hang up')
+                     || err.message?.includes('ECONNRESET')
+                     || err.message?.includes('ETIMEDOUT');
+      if (transient && attempt < 3) {
+        console.warn(`File send attempt ${attempt} failed (${err.message}) — retrying in 4s...`);
+        await sleep(4000);
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 // ─── Safe send (HTML with plain-text fallback) ────────────────────────────────
 async function safeSend(ctx, text) {
   const chunks = text.length <= 4000 ? [text] : (text.match(/[\s\S]{1,4000}/g) || [text]);
@@ -541,11 +564,23 @@ bot.action(/^report:(pdf|excel)$/, async (ctx) => {
   const dept  = depts.find(d => d.id === sess.currentDeptId);
   if (!dept) return ctx.reply('Department not found. Use /start.');
 
-  await ctx.reply('⏳ Generating your report — this may take 20–30 seconds...');
-
   const now    = new Date();
   const period = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
   const title  = 'On-Demand Report';
+  const dateStr  = now.toISOString().slice(0, 10);
+  const safeName = dept.name.replace(/[^a-zA-Z0-9]/g, '_');
+  const fmtUp    = format.toUpperCase();
+
+  // Live progress message — edited at each step so chat stays clean
+  const prog = await ctx.reply(
+    `⏳ <b>Generating ${fmtUp} Report</b>\n\n` +
+    `🔄 Step 1/3 — AI generating report content...`,
+    { parse_mode: 'HTML' }
+  );
+  const editProg = async (text) => {
+    try { await ctx.telegram.editMessageText(ctx.chat.id, prog.message_id, null, text, { parse_mode: 'HTML' }); }
+    catch {}
+  };
 
   // Step 1: AI content generation
   let content;
@@ -553,10 +588,17 @@ bot.action(/^report:(pdf|excel)$/, async (ctx) => {
     content = await generateReportContent(dept, 'on-demand', period);
   } catch (err) {
     console.error('Report AI error:', err.message);
-    return ctx.reply('❌ AI report generation failed. Please try again later.');
+    await editProg(`❌ <b>Step 1/3 failed</b> — AI generation error.\nPlease try again later.`);
+    return;
   }
 
-  // Step 2: Save to Firestore (fire-and-forget — don't delay file delivery)
+  await editProg(
+    `⏳ <b>Generating ${fmtUp} Report</b>\n\n` +
+    `✅ Step 1/3 — Report content ready\n` +
+    `🔄 Step 2/3 — Building ${fmtUp} file...`
+  );
+
+  // Step 2: Save to Firestore (fire-and-forget — never delays file delivery)
   fsAdd('reports', {
     departmentId: sess.currentDeptId,
     departmentName: dept.name,
@@ -569,26 +611,37 @@ bot.action(/^report:(pdf|excel)$/, async (ctx) => {
   }).catch(e => console.warn('Firestore report save skipped:', e.message));
 
   // Step 3: Build file and send
-  const dateStr  = now.toISOString().slice(0, 10);
-  const safeName = dept.name.replace(/[^a-zA-Z0-9]/g, '_');
-
   try {
+    let buf, filename, emoji;
     if (format === 'pdf') {
-      const buf = await makePDF(dept.name, title, content, period);
-      await ctx.replyWithDocument(
-        { source: buf, filename: `${safeName}_Report_${dateStr}.pdf` },
-        { caption: `📄 <b>${dept.name}</b> — ${period}`, parse_mode: 'HTML' }
-      );
+      buf      = await makePDF(dept.name, title, content, period);
+      filename = `${safeName}_Report_${dateStr}.pdf`;
+      emoji    = '📄';
     } else {
-      const buf = await makeExcel(dept.name, title, content, period);
-      await ctx.replyWithDocument(
-        { source: buf, filename: `${safeName}_Report_${dateStr}.xlsx` },
-        { caption: `📊 <b>${dept.name}</b> — ${period}`, parse_mode: 'HTML' }
-      );
+      buf      = await makeExcel(dept.name, title, content, period);
+      filename = `${safeName}_Report_${dateStr}.xlsx`;
+      emoji    = '📊';
     }
+
+    await editProg(
+      `⏳ <b>Generating ${fmtUp} Report</b>\n\n` +
+      `✅ Step 1/3 — Report content ready\n` +
+      `✅ Step 2/3 — File built\n` +
+      `🔄 Step 3/3 — Sending file...`
+    );
+
+    await sendFile(ctx, buf, filename, `${emoji} <b>${dept.name}</b> — ${title} · ${period}`);
+
+    await editProg(
+      `✅ <b>${fmtUp} Report Sent!</b>\n\n` +
+      `✅ Step 1/3 — Report content ready\n` +
+      `✅ Step 2/3 — File built\n` +
+      `✅ Step 3/3 — Delivered\n\n` +
+      `<i>Use /report to generate another.</i>`
+    );
   } catch (err) {
     console.error(`Report ${format} file error:`, err.message, err.stack);
-    await ctx.reply(`❌ Failed to create ${format.toUpperCase()} file. Please try again.`);
+    await editProg(`❌ <b>Step 2–3 failed</b> — Could not build or send ${fmtUp} file.\nPlease try again.`);
   }
 });
 
@@ -601,6 +654,32 @@ bot.command('logout', async (ctx) => {
   );
 });
 
+// /me
+bot.command('me', async (ctx) => {
+  const tid  = String(ctx.from.id);
+  const sess = await getSession(tid);
+
+  if (!sess?.uid)
+    return ctx.reply('🔒 <b>Not logged in.</b>\n\nUse /start to login.', { parse_mode: 'HTML' });
+
+  const allDepts   = await getDepartments();
+  const currDept   = allDepts.find(d => d.id === sess.currentDeptId);
+  const accessible = sessAccessibleDepts(allDepts, sess);
+  const roleEmoji  = sess.role === 'superadmin' ? '🛡️' : sess.role === 'admin' ? '⚡' : '👤';
+  const since      = sess.linkedAt ? new Date(sess.linkedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+
+  return ctx.reply(
+    `<b>👤 My Account</b>\n\n` +
+    `Name:    <b>${sess.displayName}</b>\n` +
+    `Email:   <code>${sess.email}</code>\n` +
+    `Role:    ${roleEmoji} <b>${sess.role}</b>\n` +
+    `Dept:    <b>${currDept?.name || 'None selected'}</b>\n` +
+    `Access:  <b>${accessible.length}</b> department${accessible.length !== 1 ? 's' : ''}\n` +
+    `Linked:  <i>${since}</i>`,
+    { parse_mode: 'HTML' }
+  );
+});
+
 // /help
 bot.command('help', async (ctx) => {
   const sess = await getSession(String(ctx.from.id));
@@ -608,15 +687,17 @@ bot.command('help', async (ctx) => {
   const currName = depts.find(d => d.id === sess?.currentDeptId)?.name;
 
   return ctx.reply(
-    `<b>BioPharma CRA Bot — Commands</b>\n\n` +
-    `/start  — Select department\n` +
+    `<b>🤖 BioPharma CRA Bot — Commands</b>\n\n` +
+    `/start  — Select department & login\n` +
     `/switch — Change active department\n` +
+    `/report — Generate PDF or Excel report\n` +
+    `/me     — My account info\n` +
     `/logout — Logout\n` +
     `/help   — This message\n\n` +
     `<b>Status:</b> ${sess?.uid
       ? `Logged in as <b>${sess.displayName}</b>\nDepartment: <b>${currName || 'None selected'}</b>`
-      : 'Not logged in'}\n\n` +
-    `After selecting a department, type your question to chat with AI!`,
+      : '🔒 Not logged in'}\n\n` +
+    `<i>Type any question after selecting a department to chat with the AI.</i>`,
     { parse_mode: 'HTML' }
   );
 });
@@ -754,8 +835,8 @@ app.post('/deliver-report', async (req, res) => {
     for (const sess of sessions) {
       try {
         await bot.telegram.sendDocument(
-          sess.id,   // document ID = Telegram user ID
-          { source: pdfBuf, filename },
+          sess.id,
+          Input.fromBuffer(pdfBuf, filename),
           { caption: `📊 <b>${deptLabel}</b> — ${title}\n${period || ''}`, parse_mode: 'HTML' }
         );
         sent++;
