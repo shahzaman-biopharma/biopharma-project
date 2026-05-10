@@ -90,6 +90,10 @@
 @media (min-width: 480px) {
   .bp-memory-label { display: inline; }
 }
+/* Hide decorative badges on small screens so action buttons always fit */
+@media (max-width: 540px) {
+  .bp-header-badge { display: none; }
+}
 
 /* ── Mic / Voice button ──────────────────────────────────── */
 .bp-mic-btn {
