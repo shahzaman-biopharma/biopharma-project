@@ -466,10 +466,20 @@ app.listen(PORT, () => console.log(`✅ Health server on port ${PORT}`));
 //  Launch
 // ═══════════════════════════════════════════════════════════
 
-console.log('🤖 BioPharma Telegram Bot starting (polling mode)...');
-bot.launch({ allowedUpdates: ['message', 'callback_query'] })
-  .then(() => console.log('✅ Bot is live! Polling Telegram...'))
-  .catch(err => { console.error('❌ Bot launch failed:', err.message); process.exit(1); });
+async function start() {
+  console.log('🤖 BioPharma Telegram Bot starting (polling mode)...');
+  try {
+    // Remove any existing webhook so polling works cleanly
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    console.log('✅ Webhook cleared');
+  } catch (e) {
+    console.log('ℹ️ No webhook to clear:', e.message);
+  }
+  await bot.launch({ allowedUpdates: ['message', 'callback_query'], dropPendingUpdates: true });
+  console.log('✅ Bot is live! Polling Telegram...');
+}
+
+start().catch(err => { console.error('❌ Bot launch failed:', err.message); process.exit(1); });
 
 process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
