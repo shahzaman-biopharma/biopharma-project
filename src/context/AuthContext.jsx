@@ -22,6 +22,7 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      setLoading(true);
       if (firebaseUser) {
         let profile = await getUserProfile(firebaseUser.uid);
         if (!profile) {
