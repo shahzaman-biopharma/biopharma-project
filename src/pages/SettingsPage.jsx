@@ -55,13 +55,11 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
     systemPrompt: dept?.systemPrompt || '',
     dataSources: dept?.dataSources || [],
     assignedUsers: dept?.assignedUsers || [],
-    telegramBotToken: dept?.telegramBotToken || '',
   });
   const [generatingPrompt, setGeneratingPrompt] = useState(false);
   const [saving, setSaving] = useState(false);
   const [newSource, setNewSource] = useState({ type: 'googlesheet', name: '', url: '', content: '' });
   const [showAddSource, setShowAddSource] = useState(false);
-  const [showToken, setShowToken] = useState(false);
 
   const set = (field) => (e) => setForm(p => ({ ...p, [field]: e.target.value }));
 
@@ -290,33 +288,6 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
             <p className="text-slate-500 text-xs py-2">No regular users found. Create users from the Users tab.</p>
           )}
         </div>
-      </section>
-
-      {/* Telegram Bot Token */}
-      <section>
-        <h3 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
-          <Bot size={14} className="text-blue-400" /> Telegram Bot Token
-        </h3>
-        <div className="relative">
-          <input
-            type={showToken ? 'text' : 'password'}
-            className={inputCls + ' pr-10'}
-            style={inputStyle}
-            value={form.telegramBotToken}
-            onChange={set('telegramBotToken')}
-            placeholder="BotFather se token: 7xxxxxxxxxx:AAA..."
-          />
-          <button
-            type="button"
-            onClick={() => setShowToken(v => !v)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        </div>
-        <p className="text-slate-500 text-xs mt-2">
-          Token save hone ke baad Render server 5 min mein is department ka bot auto-start karega.
-        </p>
       </section>
 
       {/* Actions */}
@@ -664,10 +635,7 @@ export default function SettingsPage() {
                       </div>
                       <div>
                         <p className="text-slate-500 mb-1">Telegram Bot</p>
-                        {dept.telegramBotToken
-                          ? <p className="text-green-400 text-xs">✓ Token set — bot active</p>
-                          : <p className="text-slate-600 text-xs">No token — bot disabled</p>
-                        }
+                        <p className="text-green-400 text-xs">✓ Connected — BioPharma CRA Bot</p>
                       </div>
                       <div className="col-span-2">
                         <p className="text-slate-500 mb-1">System Prompt Preview</p>

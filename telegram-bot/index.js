@@ -1,34 +1,30 @@
 'use strict';
 
-const { Telegraf, session } = require('telegraf');
+const { Telegraf } = require('telegraf');
 const express = require('express');
 
-// ─── Config ───────────────────────────────────────────────────────────────────
+// ─── Config ──────────────────────────────────────────────────────────────────
 const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
 const PROJECT_ID  = process.env.FIREBASE_PROJECT_ID || 'biopharma-a07e0';
 const OPENAI_KEY  = process.env.OPENAI_API_KEY;
+const BOT_TOKEN   = process.env.TELEGRAM_BOT_TOKEN;
 const PORT        = process.env.PORT || 3000;
 
 if (!WEB_API_KEY) { console.error('❌ FIREBASE_WEB_API_KEY missing'); process.exit(1); }
-if (!OPENAI_KEY)  { console.error('❌ OPENAI_API_KEY missing'); process.exit(1); }
+if (!OPENAI_KEY)  { console.error('❌ OPENAI_API_KEY missing');       process.exit(1); }
+if (!BOT_TOKEN)   { console.error('❌ TELEGRAM_BOT_TOKEN missing');   process.exit(1); }
 
 const FS  = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 const KEY = `?key=${WEB_API_KEY}`;
 
-// Active bots: deptId → { bot, token }
-const activeBots = new Map();
-
-// ═══════════════════════════════════════════════════════════
-//  Firestore REST helpers
-// ═══════════════════════════════════════════════════════════
-
+// ─── Firestore REST helpers ───────────────────────────────────────────────────
 function toVal(v) {
   if (v === null || v === undefined) return { nullValue: null };
-  if (typeof v === 'boolean')  return { booleanValue: v };
-  if (typeof v === 'number')   return { doubleValue: v };
-  if (typeof v === 'string')   return { stringValue: v };
-  if (Array.isArray(v))        return { arrayValue: { values: v.map(toVal) } };
-  if (typeof v === 'object')   return { mapValue: { fields: toFields(v) } };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number')  return { doubleValue: v };
+  if (typeof v === 'string')  return { stringValue: v };
+  if (Array.isArray(v))       return { arrayValue: { values: v.map(toVal) } };
+  if (typeof v === 'object')  return { mapValue: { fields: toFields(v) } };
   return { stringValue: String(v) };
 }
 function toFields(obj) {
@@ -52,7 +48,6 @@ function fromFields(fields) {
   for (const [k, v] of Object.entries(fields || {})) obj[k] = fromVal(v);
   return obj;
 }
-
 async function fsGet(path) {
   try {
     const r = await fetch(`${FS}/${path}${KEY}`);
@@ -61,8 +56,17 @@ async function fsGet(path) {
     return doc.fields ? fromFields(doc.fields) : null;
   } catch { return null; }
 }
-async function fsPatch(path, data) {
+async function fsPut(path, data) {
   await fetch(`${FS}/${path}${KEY}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: toFields(data) }),
+  });
+}
+async function fsMerge(path, data) {
+  // Partial field update — leaves other fields untouched
+  const masks = Object.keys(data).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+  await fetch(`${FS}/${path}${KEY}&${masks}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields: toFields(data) }),
@@ -83,92 +87,77 @@ async function fsCollection(col) {
   } catch { return []; }
 }
 
-// ═══════════════════════════════════════════════════════════
-//  Firebase Auth
-// ═══════════════════════════════════════════════════════════
-
+// ─── Firebase Auth ────────────────────────────────────────────────────────────
 async function signIn(email, password) {
   const r = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${WEB_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, returnSecureToken: true }),
-    }
+    { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }) }
   );
   const d = await r.json();
   if (d.error) throw new Error(d.error.message);
   return { uid: d.localId, email: d.email, displayName: d.displayName };
 }
 
-// ═══════════════════════════════════════════════════════════
-//  Data helpers
-// ═══════════════════════════════════════════════════════════
+// ─── Data helpers ─────────────────────────────────────────────────────────────
+const getDepartments = () => fsCollection('departments');
+const getUserProfile = (uid) => fsGet(`users/${uid}`);
 
-const getDepartments  = ()          => fsCollection('departments');
-const getUserProfile  = (uid)       => fsGet(`users/${uid}`);
-const getTgSession    = (tid, deptId) => fsGet(`telegramSessions/${tid}_${deptId}`);
-const saveTgSession   = (tid, deptId, data) => fsPatch(`telegramSessions/${tid}_${deptId}`, data);
-const deleteTgSession = (tid, deptId) => fsDelete(`telegramSessions/${tid}_${deptId}`);
+// Session per Telegram user (not per dept)
+// telegramSessions/${tid} → { uid, email, displayName, role, currentDeptId, step, pendingDeptId, pendingEmail }
+const getSession   = (tid) => fsGet(`telegramSessions/${tid}`);
+const mergeSession = (tid, data) => fsMerge(`telegramSessions/${tid}`, data);
+const putSession   = (tid, data) => fsPut(`telegramSessions/${tid}`, data);
+const clearSession = (tid) => fsDelete(`telegramSessions/${tid}`);
 
 async function getChatHistory(uid, deptId) {
   const doc = await fsGet(`chats/${uid}_${deptId}`);
   return (doc?.messages || []).slice(-20).filter(m => m.role !== 'system');
 }
 async function saveChatHistory(uid, deptId, messages) {
-  await fsPatch(`chats/${uid}_${deptId}`, {
+  await fsPut(`chats/${uid}_${deptId}`, {
     userId: uid, departmentId: deptId,
     messages, updatedAt: new Date().toISOString(),
   });
 }
 
-// ═══════════════════════════════════════════════════════════
-//  OpenAI — Telegram-optimized formatting
-// ═══════════════════════════════════════════════════════════
-
+// ─── OpenAI ───────────────────────────────────────────────────────────────────
 const TELEGRAM_FORMAT = `
 
-TELEGRAM FORMATTING RULES (always follow these):
-
+TELEGRAM FORMATTING RULES (always follow):
 1. NEVER use markdown tables (| col | col | format is BANNED)
 2. Present data as bullet cards:
 
-<b>📋 Record / Site Name</b>
-• Field 1: Value
-• Field 2: Value
-• Status: ✅ Verified
+<b>📋 Record / Title</b>
+• Field: Value
+• Status: ✅ Verified / ❌ Failed / ⚠️ Pending
 ─────────────────
 
 3. Section headings: <b>🔹 Heading</b>
-4. Bold: <b>important numbers and terms</b>
-5. Status emojis: ✅ complete/verified  ❌ failed/missing  ⚠️ pending/review
-6. If many records, show top 5-7 then give a summary
-7. Format for mobile screen — short and clear
-8. Always respond in English
+4. Bold important numbers: <b>42 sites</b>, <b>$1.2M</b>
+5. If many records, show top 5–7 then give a summary
+6. Keep responses short and mobile-friendly
+7. Always respond in English
 `;
 
 async function gptReply(dept, history, userText) {
-  let ctx = `Department: ${dept.name}\nDescription: ${dept.description || ''}\n`;
-
+  let ctx = `Department: ${dept.name}\n${dept.description || ''}\n`;
   for (const src of dept.dataSources || []) {
     try {
       if (src.type === 'googlesheet' && src.url) {
         const m = src.url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
         if (m) {
-          const r = await fetch(
-            `https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv`
-          );
+          const r = await fetch(`https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv`);
           if (r.ok) ctx += `\n--- ${src.name} ---\n${(await r.text()).substring(0, 4000)}\n`;
         }
       } else if (src.type === 'text' && src.content) {
         ctx += `\n--- ${src.name} ---\n${src.content}\n`;
       }
-    } catch { /* skip */ }
+    } catch {}
   }
-
   const systemPrompt = dept.systemPrompt
     ? `${dept.systemPrompt}\n\n--- DATA ---\n${ctx}${TELEGRAM_FORMAT}`
-    : `You are the AI assistant for the ${dept.name} department. Give professional and concise answers in English.\n\n--- DATA ---\n${ctx}${TELEGRAM_FORMAT}`;
+    : `You are the AI assistant for ${dept.name}. Give professional, concise answers in English.\n\n--- DATA ---\n${ctx}${TELEGRAM_FORMAT}`;
 
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -185,17 +174,12 @@ async function gptReply(dept, history, userText) {
     }),
   });
   const d = await r.json();
-  return d.choices?.[0]?.message?.content || 'Maafi chahta hun, jawab nahi mila.';
+  return d.choices?.[0]?.message?.content || 'Sorry, no response received. Please try again.';
 }
 
-// ═══════════════════════════════════════════════════════════
-//  Send helper — HTML mode with plain-text fallback
-// ═══════════════════════════════════════════════════════════
-
+// ─── Safe send (HTML with plain-text fallback) ────────────────────────────────
 async function safeSend(ctx, text) {
-  const chunks = text.length <= 4000
-    ? [text]
-    : (text.match(/[\s\S]{1,4000}/g) || [text]);
+  const chunks = text.length <= 4000 ? [text] : (text.match(/[\s\S]{1,4000}/g) || [text]);
   for (const chunk of chunks) {
     try {
       await ctx.reply(chunk, { parse_mode: 'HTML' });
@@ -205,241 +189,283 @@ async function safeSend(ctx, text) {
   }
 }
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// ─── UI helpers ───────────────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ═══════════════════════════════════════════════════════════
-//  Bot handlers — one setup per department instance
-// ═══════════════════════════════════════════════════════════
+function deptKeyboard(depts) {
+  return {
+    inline_keyboard: depts.map(d => [{
+      text: `${d.tag ? `[${d.tag}] ` : ''}${d.name}`,
+      callback_data: `dept:${d.id}`,
+    }]),
+  };
+}
 
-function setupHandlers(bot, dept) {
+function getAccessible(depts, profile) {
+  const role = profile?.role;
+  if (role === 'admin' || role === 'superadmin') return depts;
+  return depts.filter(d => (profile?.assignedDepartments || []).includes(d.id));
+}
 
-  // /start
-  bot.command('start', async (ctx) => {
-    const tid = String(ctx.from.id);
-    ctx.session = {};
+function hasAccess(profile, deptId) {
+  const role = profile?.role;
+  return role === 'admin' || role === 'superadmin' ||
+         (profile?.assignedDepartments || []).includes(deptId);
+}
 
-    const sess = await getTgSession(tid, dept.id);
-    if (sess?.uid) {
+async function enterDept(ctx, dept, sess) {
+  const history  = await getChatHistory(sess.uid, dept.id);
+  const lastUser = history.filter(m => m.role === 'user').pop();
+  const histNote = lastUser
+    ? `💬 Last: <i>"${lastUser.content.substring(0, 60)}${lastUser.content.length > 60 ? '…' : ''}"</i>`
+    : '💬 No previous conversation in this department.';
+
+  const msgCount = history.filter(m => m.role === 'user').length;
+  const countNote = msgCount > 0 ? ` (${msgCount} messages)` : '';
+
+  await ctx.reply(
+    `✅ <b>${dept.name}</b>${dept.tag ? ` · <code>${dept.tag}</code>` : ''}${countNote}\n` +
+    `${dept.description ? `<i>${dept.description}</i>\n\n` : '\n'}` +
+    `${histNote}\n\n` +
+    `Ask me anything!\n` +
+    `/switch — change department  |  /help — commands`,
+    { parse_mode: 'HTML' }
+  );
+}
+
+// ─── Bot ──────────────────────────────────────────────────────────────────────
+const bot = new Telegraf(BOT_TOKEN);
+
+// /start ── show department list
+bot.command('start', async (ctx) => {
+  const tid      = String(ctx.from.id);
+  const sess     = await getSession(tid);
+  const allDepts = await getDepartments();
+
+  if (allDepts.length === 0)
+    return ctx.reply('No departments available. Please contact your admin.');
+
+  if (sess?.uid) {
+    const profile  = await getUserProfile(sess.uid);
+    const depts    = getAccessible(allDepts, profile);
+    const currName = allDepts.find(d => d.id === sess.currentDeptId)?.name;
+    return ctx.reply(
+      `👋 <b>Welcome back, ${sess.displayName}!</b>\n` +
+      (currName ? `Current: <b>${currName}</b>\n\n` : '\n') +
+      `Select a department:`,
+      { parse_mode: 'HTML', reply_markup: deptKeyboard(depts) }
+    );
+  }
+
+  // Not logged in — show all depts, clear any stale state
+  await mergeSession(tid, { step: null, pendingDeptId: null, pendingEmail: null });
+  return ctx.reply(
+    `🤖 <b>BioPharma CRA Bot</b>\n\nWelcome! Select your department to continue:`,
+    { parse_mode: 'HTML', reply_markup: deptKeyboard(allDepts) }
+  );
+});
+
+// Dept button tapped
+bot.action(/^dept:(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const tid    = String(ctx.from.id);
+  const deptId = ctx.match[1];
+  const sess   = await getSession(tid);
+  const depts  = await getDepartments();
+  const dept   = depts.find(d => d.id === deptId);
+
+  if (!dept) return ctx.reply('Department not found. Use /start.');
+
+  if (sess?.uid) {
+    // Already logged in — just check access and switch
+    const profile = await getUserProfile(sess.uid);
+    if (!hasAccess(profile, deptId)) {
       return ctx.reply(
-        `✅ <b>Welcome back, ${sess.displayName || sess.email}!</b>\n\n` +
-        `🏢 Connected to <b>${dept.name}</b> bot.\n\nAsk me anything!`,
+        `❌ You don't have access to <b>${dept.name}</b>.\nContact your admin.`,
         { parse_mode: 'HTML' }
       );
     }
+    await mergeSession(tid, { currentDeptId: deptId, step: null });
+    return enterDept(ctx, dept, { ...sess, currentDeptId: deptId });
+  }
 
-    ctx.session.step = 'email';
-    await ctx.reply(
-      `🤖 <b>${dept.name} Bot</b>\n\nWelcome to BioPharma CRA Platform!\n\n` +
-      `📧 Please enter your <b>email</b>:`,
-      { parse_mode: 'HTML' }
-    );
-  });
+  // Not logged in — start login flow for this dept
+  await mergeSession(tid, { step: 'enter_email', pendingDeptId: deptId, pendingEmail: null });
+  return ctx.reply(
+    `🏢 <b>${dept.name}</b>\n\n📧 Please enter your <b>email address</b>:`,
+    { parse_mode: 'HTML' }
+  );
+});
 
-  // /logout
-  bot.command('logout', async (ctx) => {
-    const tid = String(ctx.from.id);
-    ctx.session = {};
-    await deleteTgSession(tid, dept.id);
-    await ctx.reply('👋 <b>Logged out.</b>\n\nUse /start to login again.', {
-      parse_mode: 'HTML',
-    });
-  });
+// /switch ── change active department
+bot.command('switch', async (ctx) => {
+  const tid  = String(ctx.from.id);
+  const sess = await getSession(tid);
 
-  // /help
-  bot.command('help', async (ctx) => {
-    await ctx.reply(
-      `<b>${dept.name} Bot</b>\n\n` +
-      `/start  — Login\n/logout — Logout\n/help   — Help\n\n` +
-      `After login, ask me anything!`,
-      { parse_mode: 'HTML' }
-    );
-  });
+  if (!sess?.uid)
+    return ctx.reply('Please use /start to login first.');
 
-  // Text messages
-  bot.on('text', async (ctx) => {
-    const tid  = String(ctx.from.id);
-    const text = ctx.message.text.trim();
-    if (text.startsWith('/')) return;
+  const allDepts = await getDepartments();
+  const profile  = await getUserProfile(sess.uid);
+  const depts    = getAccessible(allDepts, profile);
 
-    // ─ Email step
-    if (ctx.session?.step === 'email') {
-      if (!text.includes('@')) {
-        return ctx.reply('❌ Please enter a valid email address.\n\n📧 <b>Email:</b>', { parse_mode: 'HTML' });
-      }
-      ctx.session.email = text.toLowerCase().trim();
-      ctx.session.step  = 'password';
-      return ctx.reply('🔑 Enter your <b>password</b>:', { parse_mode: 'HTML' });
-    }
+  if (depts.length === 0)
+    return ctx.reply('No departments available. Contact admin.');
 
-    // ─ Password step
-    if (ctx.session?.step === 'password') {
-      await ctx.reply('⏳ Verifying...');
-      try {
-        const authUser = await signIn(ctx.session.email, text);
-        const profile  = await getUserProfile(authUser.uid);
-        const role     = profile?.role || 'user';
-        const name     = authUser.displayName || profile?.displayName || authUser.email.split('@')[0];
+  return ctx.reply(
+    `🔄 <b>Switch Department</b>\n\nSelect:`,
+    { parse_mode: 'HTML', reply_markup: deptKeyboard(depts) }
+  );
+});
 
-        // Access check — admins and superadmins always have access
-        const hasAccess =
-          role === 'admin' || role === 'superadmin' ||
-          (profile?.assignedDepartments || []).includes(dept.id);
+// /logout
+bot.command('logout', async (ctx) => {
+  await clearSession(String(ctx.from.id));
+  return ctx.reply(
+    '👋 <b>Logged out successfully.</b>\n\nUse /start to login again.',
+    { parse_mode: 'HTML' }
+  );
+});
 
-        if (!hasAccess) {
-          ctx.session = {};
-          return ctx.reply(
-            `❌ <b>Access Denied.</b>\n\nYou are not authorized for the <b>${dept.name}</b> department.\nPlease contact your admin.`,
-            { parse_mode: 'HTML' }
-          );
-        }
+// /help
+bot.command('help', async (ctx) => {
+  const sess = await getSession(String(ctx.from.id));
+  const depts = await getDepartments();
+  const currName = depts.find(d => d.id === sess?.currentDeptId)?.name;
 
-        await saveTgSession(tid, dept.id, {
-          uid: authUser.uid, email: authUser.email,
-          displayName: name, role,
-          linkedAt: new Date().toISOString(),
-        });
-        ctx.session = {};
+  return ctx.reply(
+    `<b>BioPharma CRA Bot — Commands</b>\n\n` +
+    `/start  — Select department\n` +
+    `/switch — Change active department\n` +
+    `/logout — Logout\n` +
+    `/help   — This message\n\n` +
+    `<b>Status:</b> ${sess?.uid
+      ? `Logged in as <b>${sess.displayName}</b>\nDepartment: <b>${currName || 'None selected'}</b>`
+      : 'Not logged in'}\n\n` +
+    `After selecting a department, type your question to chat with AI!`,
+    { parse_mode: 'HTML' }
+  );
+});
 
-        const adminBadge = (role === 'admin' || role === 'superadmin')
-          ? `\n🛡 Role: <b>${role}</b>` : '';
+// Text messages ── login flow + chat
+bot.on('text', async (ctx) => {
+  const tid  = String(ctx.from.id);
+  const text = ctx.message.text.trim();
+  if (text.startsWith('/')) return;
 
+  const sess = await getSession(tid);
+
+  // ── Email step
+  if (sess?.step === 'enter_email') {
+    if (!text.includes('@'))
+      return ctx.reply('❌ Please enter a valid email address.\n\n📧 <b>Email:</b>', { parse_mode: 'HTML' });
+    await mergeSession(tid, { pendingEmail: text.toLowerCase().trim(), step: 'enter_password' });
+    return ctx.reply('🔑 Enter your <b>password</b>:', { parse_mode: 'HTML' });
+  }
+
+  // ── Password step
+  if (sess?.step === 'enter_password') {
+    await ctx.reply('⏳ Verifying...');
+    try {
+      const auth    = await signIn(sess.pendingEmail, text);
+      const profile = await getUserProfile(auth.uid);
+      const role    = profile?.role || 'user';
+      const name    = auth.displayName || profile?.displayName || auth.email.split('@')[0];
+      const depts   = await getDepartments();
+      const dept    = depts.find(d => d.id === sess.pendingDeptId);
+
+      if (!hasAccess(profile, sess.pendingDeptId)) {
+        await mergeSession(tid, { step: null, pendingDeptId: null, pendingEmail: null });
         return ctx.reply(
-          `✅ <b>Login Successful!</b>\n\nWelcome <b>${name}!</b> 🎉${adminBadge}\n\n` +
-          `🏢 Connected to <b>${dept.name}</b> bot!\n\nAsk me anything! 🚀`,
+          `❌ <b>Access Denied.</b>\n\nYou are not authorized for <b>${dept?.name || 'this department'}</b>.\nContact your admin.`,
           { parse_mode: 'HTML' }
         );
-
-      } catch (err) {
-        ctx.session.step  = 'email';
-        ctx.session.email = undefined;
-        const errMsg =
-          err.message?.includes('INVALID') || err.message?.includes('EMAIL_NOT_FOUND')
-            ? '❌ <b>Invalid email or password.</b>'
-            : '❌ Login failed. Please try again.';
-        return ctx.reply(`${errMsg}\n\n📧 Enter your <b>email</b>:`, { parse_mode: 'HTML' });
       }
-    }
 
-    // ─ Chat
-    const sess = await getTgSession(tid, dept.id);
-    if (!sess?.uid) {
-      ctx.session = { step: 'email' };
-      return ctx.reply('🔐 Please login first.\n\n📧 Enter your <b>email</b>:', { parse_mode: 'HTML' });
-    }
+      const newSess = {
+        uid: auth.uid, email: auth.email, displayName: name, role,
+        currentDeptId: sess.pendingDeptId,
+        step: null, pendingDeptId: null, pendingEmail: null,
+        linkedAt: new Date().toISOString(),
+      };
+      await putSession(tid, newSess);
 
-    await ctx.replyWithChatAction('typing');
-
-    try {
-      const history = await getChatHistory(sess.uid, dept.id);
-      const reply   = await gptReply(dept, history, text);
-
-      await saveChatHistory(sess.uid, dept.id, [
-        ...history,
-        { role: 'user',      content: text,  timestamp: Date.now(), source: 'telegram' },
-        { role: 'assistant', content: reply, timestamp: Date.now(), source: 'telegram' },
-      ]);
-
-      await safeSend(ctx, reply);
+      const badge = (role === 'admin' || role === 'superadmin') ? `\n🛡️ Role: <b>${role}</b>` : '';
+      await ctx.reply(
+        `✅ <b>Login Successful!</b>\nWelcome, <b>${name}!</b>${badge}`,
+        { parse_mode: 'HTML' }
+      );
+      if (dept) await enterDept(ctx, dept, newSess);
 
     } catch (err) {
-      console.error(`[${dept.name}] chat error:`, err.message);
-      await ctx.reply('❌ Could not get a response. Please try again later.');
+      await mergeSession(tid, { step: 'enter_email', pendingEmail: null });
+      const msg = err.message?.includes('INVALID') || err.message?.includes('EMAIL_NOT_FOUND')
+        ? '❌ <b>Invalid email or password.</b>'
+        : '❌ Login failed. Please try again.';
+      return ctx.reply(`${msg}\n\n📧 Enter your <b>email</b>:`, { parse_mode: 'HTML' });
     }
-  });
-}
-
-// ═══════════════════════════════════════════════════════════
-//  Launch one department bot (with retry on 409)
-// ═══════════════════════════════════════════════════════════
-
-async function launchDeptBot(dept) {
-  const token = dept.telegramBotToken;
-  if (!token) return;
-
-  // Skip if already running with same token
-  const existing = activeBots.get(dept.id);
-  if (existing?.token === token) return;
-
-  // Stop old bot if token changed
-  if (existing) {
-    try { existing.bot.stop('token-changed'); } catch {}
-    activeBots.delete(dept.id);
-    await sleep(2000);
+    return;
   }
 
-  const bot = new Telegraf(token);
-  bot.use(session());
-  setupHandlers(bot, dept);
-
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    try {
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-      await bot.launch({
-        allowedUpdates: ['message', 'callback_query'],
-        dropPendingUpdates: true,
-      });
-      console.log(`✅ [${dept.name}] bot live`);
-      activeBots.set(dept.id, { bot, token });
-      return;
-    } catch (err) {
-      console.error(`⚠️ [${dept.name}] attempt ${attempt}/4: ${err.message}`);
-      if (err.message.includes('409') && attempt < 4) {
-        console.log(`⏳ [${dept.name}] waiting 35s for old connection to expire...`);
-        await sleep(35000);
-      } else if (attempt === 4) {
-        console.error(`❌ [${dept.name}] failed to launch`);
-      }
-    }
+  // ── Not logged in
+  if (!sess?.uid) {
+    return ctx.reply(
+      'Please use /start to select a department and login.',
+      { parse_mode: 'HTML' }
+    );
   }
-}
 
-// ═══════════════════════════════════════════════════════════
-//  Refresh — detect new / changed tokens every 5 minutes
-// ═══════════════════════════════════════════════════════════
+  // ── No department selected yet
+  if (!sess?.currentDeptId) {
+    const allDepts = await getDepartments();
+    const profile  = await getUserProfile(sess.uid);
+    return ctx.reply(
+      'Select a department first:',
+      { reply_markup: deptKeyboard(getAccessible(allDepts, profile)) }
+    );
+  }
 
-async function refreshBots() {
+  // ── Chat
   const depts = await getDepartments();
-  const withToken = depts.filter(d => d.telegramBotToken);
-  console.log(`🔄 Refresh: ${withToken.length} department(s) with token`);
-  for (const dept of withToken) {
-    await launchDeptBot(dept);
+  const dept  = depts.find(d => d.id === sess.currentDeptId);
+  if (!dept) return ctx.reply('Department not found. Use /start.');
+
+  await ctx.replyWithChatAction('typing');
+  try {
+    const history = await getChatHistory(sess.uid, sess.currentDeptId);
+    const reply   = await gptReply(dept, history, text);
+
+    await saveChatHistory(sess.uid, sess.currentDeptId, [
+      ...history,
+      { role: 'user',      content: text,  timestamp: Date.now(), source: 'telegram' },
+      { role: 'assistant', content: reply, timestamp: Date.now(), source: 'telegram' },
+    ]);
+
+    await safeSend(ctx, reply);
+  } catch (err) {
+    console.error(`[${dept.name}] chat error:`, err.message);
+    await ctx.reply('❌ Could not get a response. Please try again later.');
   }
-}
+});
 
-// ═══════════════════════════════════════════════════════════
-//  Express health check
-// ═══════════════════════════════════════════════════════════
-
+// ─── Express health check (starts immediately — before bot connect) ────────────
 const app = express();
-app.get('/', (_, res) =>
-  res.send(`🤖 BioPharma Multi-Dept Bot — ${activeBots.size} bot(s) running`)
-);
-app.get('/health', (_, res) =>
-  res.json({
-    ok: true,
-    bots: activeBots.size,
-    departments: [...activeBots.keys()],
-    uptime: process.uptime(),
-  })
-);
+app.get('/',       (_, res) => res.send('🤖 BioPharma CRA Bot — Running'));
+app.get('/health', (_, res) => res.json({ ok: true, uptime: process.uptime() }));
 app.listen(PORT, () => console.log(`✅ Health server on port ${PORT}`));
 
-// ═══════════════════════════════════════════════════════════
-//  Main
-// ═══════════════════════════════════════════════════════════
-
+// ─── Launch ───────────────────────────────────────────────────────────────────
 async function main() {
-  console.log('🤖 BioPharma Multi-Department Bot Manager starting...');
-  // Wait for old Render instance to fully stop before connecting (avoids 409)
+  console.log('🤖 BioPharma CRA Bot starting...');
   console.log('⏳ Waiting 25s for old instance to stop...');
   await sleep(25000);
-  await refreshBots();
 
-  // Auto-detect new department tokens every 5 minutes
-  setInterval(refreshBots, 5 * 60 * 1000);
+  await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+  await bot.launch({ allowedUpdates: ['message', 'callback_query'], dropPendingUpdates: true });
+  console.log('✅ Bot is live! Polling Telegram...');
 
-  process.once('SIGINT',  () => { for (const { bot } of activeBots.values()) { try { bot.stop('SIGINT');  } catch {} } process.exit(0); });
-  process.once('SIGTERM', () => { for (const { bot } of activeBots.values()) { try { bot.stop('SIGTERM'); } catch {} } process.exit(0); });
+  process.once('SIGINT',  () => { try { bot.stop('SIGINT');  } catch {} process.exit(0); });
+  process.once('SIGTERM', () => { try { bot.stop('SIGTERM'); } catch {} process.exit(0); });
 }
 
 main().catch(err => { console.error('❌ Startup failed:', err.message); process.exit(1); });
