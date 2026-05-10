@@ -182,28 +182,30 @@ function ChatMessage({ msg }) {
   };
 
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''} animate-fade-in`}>
-      <div className={`w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center ${
-        isUser
-          ? 'bg-gradient-to-br from-blue-500 to-cyan-500'
-          : ''
-      }`}
-        style={isUser ? {} : {
+    <div className={`flex gap-2 w-full ${isUser ? 'flex-row-reverse' : ''} animate-fade-in`}>
+      {/* Avatar */}
+      <div className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center"
+        style={isUser ? {
+          background: 'linear-gradient(135deg, #3b82f6, #06b6d4)',
+        } : {
           background: 'rgba(59,130,246,0.15)',
           border: '1px solid rgba(59,130,246,0.2)',
         }}>
         {isUser ? <User size={14} className="text-white" /> : <Bot size={14} className="text-blue-400" />}
       </div>
 
-      <div className={`flex flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}
-        style={{ maxWidth: 'min(82%, calc(100vw - 72px))', minWidth: 0 }}>
+      {/* Bubble wrapper — constrained width, flex-shrink so it never overflows row */}
+      <div className={`flex flex-col gap-1.5 min-w-0 flex-shrink`}
+        style={{ maxWidth: isUser ? 'min(75%, calc(100vw - 60px))' : 'min(85%, calc(100vw - 60px))' }}>
+        {/* Bubble — w-full forces it to respect wrapper max-width */}
         <div
-          className={`px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+          className={`w-full px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
           style={isUser ? {
             background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
             color: 'white',
             fontSize: '0.875rem',
             lineHeight: '1.65',
+            wordBreak: 'break-word',
           } : {
             background: 'var(--card-bg)',
             border: '1px solid var(--border-clr)',
@@ -212,7 +214,7 @@ function ChatMessage({ msg }) {
           }}
         >
           {isUser ? (
-            <span className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</span>
+            <span className="text-sm leading-relaxed" style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{msg.content}</span>
           ) : (
             <ReactMarkdown
               className="bot-markdown"
