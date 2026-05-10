@@ -7,8 +7,9 @@ import { fetchGoogleSheetData } from '../services/excel';
 import {
   ArrowLeft, Send, Bot, User, Loader2,
   Database, RefreshCw, Sparkles,
-  FileSpreadsheet, FileDown, Table2, BrainCircuit,
+  FileSpreadsheet, FileDown, Table2, BrainCircuit, Mic,
 } from 'lucide-react';
+import VoiceMode from '../components/common/VoiceMode';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
@@ -281,6 +282,7 @@ export default function BotPage() {
   const [pageLoading, setPageLoading] = useState(true);
   const [dataContext, setDataContext] = useState('');
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
 
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
@@ -429,6 +431,17 @@ export default function BotPage() {
     toast.success('Chat cleared');
   };
 
+  const handleVoiceMessage = useCallback(async (userText, botText) => {
+    const userMsg = { role: 'user', content: userText, timestamp: Date.now() };
+    const botMsg  = { role: 'assistant', content: botText, timestamp: Date.now() };
+    const newMessages = [...messages, userMsg, botMsg];
+    setMessages(newMessages);
+    await saveChatMessage(user.uid, deptId, newMessages.map(m => {
+      const { fileData: _, ...rest } = m;
+      return rest;
+    }));
+  }, [messages, user.uid, deptId]);
+
   if (pageLoading) {
     return (
       <div className="bp-page-loading">
@@ -477,6 +490,13 @@ export default function BotPage() {
           PDF / Excel
         </div>
 
+        <button
+          className="bp-header-btn bp-mic-btn"
+          onClick={() => setVoiceMode(true)}
+          title="Voice mode"
+        >
+          <Mic size={14} />
+        </button>
         <button className="bp-header-btn" onClick={clearChat} title="Clear chat">
           <RefreshCw size={14} />
         </button>
@@ -537,6 +557,17 @@ export default function BotPage() {
           Enter to send • Shift+Enter for new line • Ask for PDF/Excel to download files
         </p>
       </div>
+
+      {/* ── Voice Mode overlay ── */}
+      {voiceMode && (
+        <VoiceMode
+          department={department}
+          messages={messages}
+          dataContext={dataContext}
+          onClose={() => setVoiceMode(false)}
+          onVoiceMessage={handleVoiceMessage}
+        />
+      )}
 
     </div>
   );

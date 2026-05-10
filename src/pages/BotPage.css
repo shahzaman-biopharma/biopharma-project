@@ -91,6 +91,16 @@
   .bp-memory-label { display: inline; }
 }
 
+/* ── Mic / Voice button ──────────────────────────────────── */
+.bp-mic-btn {
+  color: #a78bfa;
+  border-color: rgba(167,139,250,0.25);
+}
+.bp-mic-btn:hover {
+  background: rgba(167,139,250,0.15) !important;
+  color: #c4b5fd;
+}
+
 /* ── Memory boundary divider ─────────────────────────────── */
 .bp-memory-divider {
   display: flex;

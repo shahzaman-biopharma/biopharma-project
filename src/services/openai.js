@@ -28,10 +28,18 @@ CONVERSATION MEMORY (critical — always follow):
 - Never say "please provide the data again" if it was already given in this conversation
 `;
 
-export async function chatWithBot({ systemPrompt, messages, dataContext = '' }) {
+const VOICE_INSTRUCTIONS = `
+VOICE MODE — STRICT RULES (override all formatting rules):
+- LANGUAGE: Always respond in English only, no matter what language the user speaks
+- LENGTH: Maximum 2-3 sentences — be concise and conversational
+- FORMAT: Plain prose only — absolutely no markdown, no **, no ##, no bullet points, no tables
+- TONE: Natural, warm, spoken-word style as if talking face to face
+`;
+
+export async function chatWithBot({ systemPrompt, messages, dataContext = '', voiceMode = false }) {
   const systemContent = [
     systemPrompt,
-    FORMAT_INSTRUCTIONS,
+    voiceMode ? VOICE_INSTRUCTIONS : FORMAT_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS,
     dataContext ? `--- DATA CONTEXT ---\n${dataContext}` : '',
   ].filter(Boolean).join('\n\n');
