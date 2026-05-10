@@ -195,9 +195,10 @@ function ChatMessage({ msg }) {
         {isUser ? <User size={14} className="text-white" /> : <Bot size={14} className="text-blue-400" />}
       </div>
 
-      <div className={`min-w-0 ${isUser ? 'max-w-[78%] items-end' : 'max-w-[88%] items-start'} flex flex-col gap-1.5`}>
+      <div className={`flex flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}
+        style={{ maxWidth: 'min(82%, calc(100vw - 72px))', minWidth: 0 }}>
         <div
-          className={`px-4 py-3 rounded-2xl overflow-hidden ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+          className={`px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
           style={isUser ? {
             background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
             color: 'white',
@@ -206,7 +207,8 @@ function ChatMessage({ msg }) {
           } : {
             background: 'var(--card-bg)',
             border: '1px solid var(--border-clr)',
-            minWidth: 0,
+            overflowX: 'auto',
+            WebkitOverflowScrolling: 'touch',
           }}
         >
           {isUser ? (
