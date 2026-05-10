@@ -83,4 +83,43 @@ Write only the system prompt, nothing else.`,
   return response.choices[0].message.content;
 }
 
+export async function generateFileData({ userRequest, dataContext, departmentName }) {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      {
+        role: 'system',
+        content: `You are a data extraction assistant for ${departmentName}.
+When asked to create a table/report, you MUST respond with ONLY valid JSON (no markdown, no explanation) in this exact format:
+{
+  "title": "Report Title",
+  "subtitle": "Department Name | Date",
+  "summary": "2-3 sentence executive summary",
+  "sheets": [
+    {
+      "name": "Sheet Name",
+      "headers": ["Column1", "Column2", "Column3"],
+      "rows": [
+        ["value1", "value2", "value3"],
+        ["value1", "value2", "value3"]
+      ]
+    }
+  ]
+}
+Use the provided data context to populate the tables accurately. Create multiple sheets if the data has multiple categories.`,
+      },
+      {
+        role: 'user',
+        content: `Data Context:\n${dataContext}\n\nUser Request: ${userRequest}\n\nReturn ONLY valid JSON.`,
+      },
+    ],
+    temperature: 0.2,
+    max_tokens: 3000,
+  });
+
+  const raw = response.choices[0].message.content.trim();
+  const jsonStr = raw.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '');
+  return JSON.parse(jsonStr);
+}
+
 export default openai;

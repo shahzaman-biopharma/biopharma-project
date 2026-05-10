@@ -126,3 +126,24 @@ export function subscribeToReports(callback) {
     snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
   );
 }
+
+// ─── Report Settings ──────────────────────────────────────────────────────────
+
+export async function getReportSettings() {
+  const snap = await getDoc(doc(db, 'settings', 'reports'));
+  return snap.exists() ? snap.data() : {
+    enabled: false,
+    timezone: 'Asia/Karachi',
+    weeklyDay: 1,
+    weeklyHour: 8,
+    monthlyDay: 1,
+    monthlyHour: 8,
+    lastWeeklyGen: null,
+    lastMonthlyGen: null,
+    departmentAccess: {},
+  };
+}
+
+export async function saveReportSettings(data) {
+  await setDoc(doc(db, 'settings', 'reports'), data, { merge: true });
+}

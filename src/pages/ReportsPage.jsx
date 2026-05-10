@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { subscribeToReports, saveReport, getAllDepartments } from '../services/firestore';
+import { subscribeToReports, saveReport, getAllDepartments, getReportSettings } from '../services/firestore';
 import { generateReport } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
@@ -95,19 +95,30 @@ function ReportCard({ report }) {
 }
 
 export default function ReportsPage() {
-  const { isAdmin, user } = useAuth();
+  const { isAdmin, isSuperAdmin, user, userProfile } = useAuth();
   const [reports, setReports] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [generating, setGenerating] = useState(false);
   const [selectedDept, setSelectedDept] = useState('');
   const [reportType, setReportType] = useState('weekly');
   const [filter, setFilter] = useState('all');
+  const [accessSettings, setAccessSettings] = useState({});
 
   useEffect(() => {
     const unsub = subscribeToReports(setReports);
     getAllDepartments().then(setDepartments);
+    getReportSettings().then(s => setAccessSettings(s?.departmentAccess || {}));
     return unsub;
   }, []);
+
+  const canViewReport = (report) => {
+    if (isSuperAdmin) return true;
+    const access = accessSettings[report.departmentId];
+    if (!access) return isAdmin; // default: admins only
+    if (isAdmin && access.allowAdmins !== false) return true;
+    if ((access.allowedUsers || []).includes(user?.uid)) return true;
+    return false;
+  };
 
   const handleGenerate = async () => {
     if (!selectedDept) { toast.error('Select a department'); return; }
@@ -153,9 +164,9 @@ export default function ReportsPage() {
     }
   };
 
-  const filtered = filter === 'all'
-    ? reports
-    : reports.filter(r => r.type === filter);
+  const filtered = reports
+    .filter(r => canViewReport(r))
+    .filter(r => filter === 'all' || r.type === filter);
 
   return (
     <div className="p-6">

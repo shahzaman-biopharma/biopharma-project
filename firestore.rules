@@ -28,5 +28,11 @@ service cloud.firestore {
     match /telegramPending/{userId} {
       allow read, write: if true;
     }
+
+    // App settings — read/write by logged-in users, cron reads publicly
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
   }
 }

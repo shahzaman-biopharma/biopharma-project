@@ -4,6 +4,7 @@ import { Navigate } from 'react-router-dom';
 import {
   getAllDepartments, createDepartment, updateDepartment, deleteDepartment,
   getAllUsers, updateUserProfile, deleteUser,
+  getReportSettings, saveReportSettings,
 } from '../services/firestore';
 import { generateDepartmentPrompt } from '../services/openai';
 import {
@@ -18,6 +19,29 @@ import toast from 'react-hot-toast';
 const TABS = [
   { id: 'departments', label: 'Departments', icon: Bot },
   { id: 'users', label: 'Users', icon: Users },
+  { id: 'reports', label: 'Reports', icon: FileText },
+];
+
+const TIMEZONES = [
+  { value: 'Asia/Karachi', label: 'Pakistan (PKT, UTC+5)' },
+  { value: 'Asia/Kolkata', label: 'India (IST, UTC+5:30)' },
+  { value: 'Asia/Dubai', label: 'UAE (GST, UTC+4)' },
+  { value: 'Asia/Riyadh', label: 'Saudi Arabia (AST, UTC+3)' },
+  { value: 'Europe/London', label: 'UK (GMT/BST)' },
+  { value: 'America/New_York', label: 'USA Eastern (EST/EDT)' },
+  { value: 'America/Chicago', label: 'USA Central (CST/CDT)' },
+  { value: 'America/Los_Angeles', label: 'USA Pacific (PST/PDT)' },
+  { value: 'UTC', label: 'UTC' },
+];
+
+const WEEKDAYS = [
+  { value: 0, label: 'Sunday' },
+  { value: 1, label: 'Monday' },
+  { value: 2, label: 'Tuesday' },
+  { value: 3, label: 'Wednesday' },
+  { value: 4, label: 'Thursday' },
+  { value: 5, label: 'Friday' },
+  { value: 6, label: 'Saturday' },
 ];
 
 // ─── Department Form ─────────────────────────────────────────────────────────
@@ -354,6 +378,18 @@ export default function SettingsPage() {
   const [editingDept, setEditingDept] = useState(null);
   const [expandedDept, setExpandedDept] = useState(null);
 
+  // Report settings state
+  const [reportSettings, setReportSettings] = useState({
+    enabled: false,
+    timezone: 'Asia/Karachi',
+    weeklyDay: 1,
+    weeklyHour: 8,
+    monthlyDay: 1,
+    monthlyHour: 8,
+    departmentAccess: {},
+  });
+  const [savingReportSettings, setSavingReportSettings] = useState(false);
+
   // User creation state
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
@@ -366,13 +402,38 @@ export default function SettingsPage() {
   useEffect(() => {
     const load = async () => {
       setLoading(true);
-      const [depts, usrs] = await Promise.all([getAllDepartments(), getAllUsers()]);
+      const [depts, usrs, rptSettings] = await Promise.all([
+        getAllDepartments(), getAllUsers(), getReportSettings(),
+      ]);
       setDepartments(depts);
       setUsers(usrs);
+      if (rptSettings) setReportSettings(rptSettings);
       setLoading(false);
     };
     load();
   }, []);
+
+  const handleSaveReportSettings = async () => {
+    setSavingReportSettings(true);
+    try {
+      await saveReportSettings(reportSettings);
+      toast.success('Report settings saved!');
+    } catch {
+      toast.error('Failed to save settings');
+    } finally {
+      setSavingReportSettings(false);
+    }
+  };
+
+  const setAccess = (deptId, field, value) => {
+    setReportSettings(p => ({
+      ...p,
+      departmentAccess: {
+        ...p.departmentAccess,
+        [deptId]: { ...(p.departmentAccess?.[deptId] || {}), [field]: value },
+      },
+    }));
+  };
 
   const handleSaveDept = async (form) => {
     if (editingDept) {
@@ -814,6 +875,224 @@ export default function SettingsPage() {
                 <p className="text-slate-400">No users yet. Create your first user above.</p>
               </div>
             )}
+          </div>
+        </div>
+      ) : (
+        /* ─── REPORTS SETTINGS TAB ─── */
+        <div className="space-y-6 max-w-3xl">
+
+          {/* Auto-Schedule Card */}
+          <div className="glass rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-white font-semibold flex items-center gap-2">
+                <FileText size={16} className="text-blue-400" /> Auto-Report Schedule
+              </h2>
+              {/* Enable toggle */}
+              <button
+                onClick={() => setReportSettings(p => ({ ...p, enabled: !p.enabled }))}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all"
+                style={reportSettings.enabled ? {
+                  background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)', color: '#34d399',
+                } : {
+                  background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#64748b',
+                }}
+              >
+                <div className={`w-4 h-4 rounded-full ${reportSettings.enabled ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                {reportSettings.enabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              {/* Timezone */}
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1.5 block">Timezone</label>
+                <select
+                  value={reportSettings.timezone}
+                  onChange={e => setReportSettings(p => ({ ...p, timezone: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl text-white text-sm outline-none"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.2)' }}
+                >
+                  {TIMEZONES.map(tz => (
+                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Weekly */}
+              <div className="p-4 rounded-xl" style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
+                <p className="text-blue-400 text-xs font-semibold mb-3 uppercase tracking-wide">Weekly Report</p>
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Day</label>
+                    <select
+                      value={reportSettings.weeklyDay}
+                      onChange={e => setReportSettings(p => ({ ...p, weeklyDay: parseInt(e.target.value) }))}
+                      className="w-full px-3 py-2 rounded-lg text-white text-sm outline-none"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}
+                    >
+                      {WEEKDAYS.map(d => (
+                        <option key={d.value} value={d.value}>{d.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Time (in selected timezone)</label>
+                    <select
+                      value={reportSettings.weeklyHour}
+                      onChange={e => setReportSettings(p => ({ ...p, weeklyHour: parseInt(e.target.value) }))}
+                      className="w-full px-3 py-2 rounded-lg text-white text-sm outline-none"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}
+                    >
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <option key={i} value={i}>
+                          {String(i).padStart(2, '0')}:00 {i < 12 ? 'AM' : 'PM'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Monthly */}
+              <div className="p-4 rounded-xl" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.15)' }}>
+                <p className="text-purple-400 text-xs font-semibold mb-3 uppercase tracking-wide">Monthly Report</p>
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Day of Month</label>
+                    <select
+                      value={reportSettings.monthlyDay}
+                      onChange={e => setReportSettings(p => ({ ...p, monthlyDay: parseInt(e.target.value) }))}
+                      className="w-full px-3 py-2 rounded-lg text-white text-sm outline-none"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}
+                    >
+                      {Array.from({ length: 28 }, (_, i) => (
+                        <option key={i + 1} value={i + 1}>{i + 1}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Time (in selected timezone)</label>
+                    <select
+                      value={reportSettings.monthlyHour}
+                      onChange={e => setReportSettings(p => ({ ...p, monthlyHour: parseInt(e.target.value) }))}
+                      className="w-full px-3 py-2 rounded-lg text-white text-sm outline-none"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}
+                    >
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <option key={i} value={i}>
+                          {String(i).padStart(2, '0')}:00 {i < 12 ? 'AM' : 'PM'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Info box */}
+            <div className="mt-4 rounded-xl p-3" style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)' }}>
+              <p className="text-yellow-400 text-xs font-medium mb-1">How it works</p>
+              <p className="text-slate-400 text-xs">
+                Reports auto-generate on the scheduled day/time in your selected timezone. The cron job runs daily at 08:00 AM PKT (03:00 UTC).
+                Weekly reports generate on the selected weekday, monthly on the selected date.
+              </p>
+            </div>
+
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={handleSaveReportSettings}
+                disabled={savingReportSettings}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white gradient-btn disabled:opacity-50"
+              >
+                {savingReportSettings ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save Schedule
+              </button>
+            </div>
+          </div>
+
+          {/* Per-Department Access Control */}
+          <div className="glass rounded-2xl p-6">
+            <h2 className="text-white font-semibold flex items-center gap-2 mb-5">
+              <Shield size={16} className="text-yellow-400" /> Report Access Control
+            </h2>
+            <p className="text-slate-400 text-xs mb-4">
+              Control who can see each department's reports. SuperAdmin always has access.
+            </p>
+
+            <div className="space-y-3">
+              {departments.map(dept => {
+                const access = reportSettings.departmentAccess?.[dept.id] || { allowAdmins: true, allowedUsers: [] };
+                return (
+                  <div key={dept.id} className="p-4 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg flex items-center justify-center"
+                          style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.2)' }}>
+                          <Bot size={13} className="text-blue-400" />
+                        </div>
+                        <p className="text-white text-sm font-medium">{dept.name}</p>
+                        {dept.tag && (
+                          <span className="px-1.5 py-0.5 rounded text-xs font-bold text-blue-400"
+                            style={{ background: 'rgba(59,130,246,0.1)' }}>
+                            {dept.tag}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 text-xs">
+                      {/* Allow admins toggle */}
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={access.allowAdmins !== false}
+                          onChange={e => setAccess(dept.id, 'allowAdmins', e.target.checked)}
+                          className="w-3.5 h-3.5 accent-blue-500"
+                        />
+                        <span className="text-slate-300">Admins can view</span>
+                      </label>
+
+                      {/* Specific users */}
+                      <div className="flex-1">
+                        <span className="text-slate-500 mr-2">Users:</span>
+                        {users.filter(u => u.role === 'user').map(u => (
+                          <label key={u.id} className="inline-flex items-center gap-1 mr-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={(access.allowedUsers || []).includes(u.id)}
+                              onChange={e => {
+                                const current = access.allowedUsers || [];
+                                setAccess(dept.id, 'allowedUsers',
+                                  e.target.checked
+                                    ? [...current, u.id]
+                                    : current.filter(id => id !== u.id)
+                                );
+                              }}
+                              className="w-3.5 h-3.5 accent-blue-500"
+                            />
+                            <span className="text-slate-400">{u.displayName}</span>
+                          </label>
+                        ))}
+                        {users.filter(u => u.role === 'user').length === 0 && (
+                          <span className="text-slate-600">No regular users yet</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-end mt-4">
+              <button
+                onClick={handleSaveReportSettings}
+                disabled={savingReportSettings}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white gradient-btn disabled:opacity-50"
+              >
+                {savingReportSettings ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save Access
+              </button>
+            </div>
           </div>
         </div>
       )}
