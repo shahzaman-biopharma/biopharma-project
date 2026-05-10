@@ -105,6 +105,19 @@ export async function saveReport(data) {
   });
 }
 
+export async function deliverReportToBot(departmentId, departmentName, content, type, period) {
+  try {
+    const botUrl = import.meta.env.VITE_BOT_API_URL || 'https://biopharma-project.onrender.com';
+    await fetch(`${botUrl}/deliver-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ departmentId, departmentName, content, type, period }),
+    });
+  } catch (e) {
+    console.warn('Bot delivery skipped:', e.message);
+  }
+}
+
 export async function getReports(departmentId) {
   const q = query(
     collection(db, 'reports'),

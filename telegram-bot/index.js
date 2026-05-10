@@ -75,6 +75,16 @@ async function fsMerge(path, data) {
 async function fsDelete(path) {
   await fetch(`${FS}/${path}${KEY}`, { method: 'DELETE' });
 }
+async function fsAdd(col, data) {
+  // POST to collection — Firestore assigns auto-ID
+  const r = await fetch(`${FS}/${col}${KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: toFields(data) }),
+  });
+  const d = await r.json();
+  return d.name?.split('/').pop() || null;
+}
 async function fsCollection(col) {
   try {
     const r = await fetch(`${FS}/${col}${KEY}`);
@@ -200,6 +210,161 @@ async function gptReply(dept, history, userText) {
   });
   const d = await r.json();
   return d.choices?.[0]?.message?.content || 'Sorry, no response received. Please try again.';
+}
+
+// ─── Report helpers ───────────────────────────────────────────────────────────
+
+async function generateReportContent(dept, type, period) {
+  let dataCtx = `Department: ${dept.name}\n${dept.description || ''}\n`;
+  for (const src of dept.dataSources || []) {
+    try {
+      if (src.type === 'googlesheet' && src.url) {
+        const m = src.url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+        if (m) {
+          const r = await fetch(`https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv`);
+          if (r.ok) dataCtx += `\n--- ${src.name} ---\n${(await r.text()).substring(0, 4000)}\n`;
+        }
+      } else if (src.type === 'text' && src.content) {
+        dataCtx += `\n--- ${src.name} ---\n${src.content}\n`;
+      }
+    } catch {}
+  }
+  const basePrompt = dept.systemPrompt || `You are the AI assistant for the ${dept.name} department.`;
+  const prompt = `${basePrompt}\n\nGenerate a comprehensive ${type} report for ${period}.\n\nInclude:\n1. Executive Summary\n2. Key Metrics & Statistics\n3. Recent Activity & Findings\n4. Issues & Concerns\n5. Recommendations\n\nDATA:\n${dataCtx}\n\nFormat with clear section headings (## Heading). Use bullet points (- item). No markdown tables. Plain text only. English.`;
+
+  const r = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_KEY}` },
+    body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], temperature: 0.5, max_tokens: 2000 }),
+  });
+  const d = await r.json();
+  return d.choices?.[0]?.message?.content || 'Report generation failed.';
+}
+
+async function makePDF(deptName, title, content, period) {
+  const PDFDocument = require('pdfkit');
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 55, size: 'A4', bufferPages: true,
+      info: { Title: `${deptName} - ${title}`, Author: 'BioPharma CRA Bot' } });
+    const chunks = [];
+    doc.on('data', c => chunks.push(c));
+    doc.on('end',  () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Header bar
+    doc.rect(0, 0, doc.page.width, 75).fill('#1e3a5f');
+    doc.fillColor('white').fontSize(17).font('Helvetica-Bold')
+       .text('BioPharma CRA Platform', 55, 18, { align: 'center' });
+    doc.fontSize(11).font('Helvetica')
+       .text(`${deptName}  ·  ${title}`, 55, 42, { align: 'center' });
+    doc.fillColor('black').moveDown(4.5);
+
+    doc.fontSize(9).fillColor('#888')
+       .text(`Period: ${period}  |  Generated: ${new Date().toLocaleString()}`, { align: 'right' });
+    doc.moveDown(0.5);
+    doc.moveTo(55, doc.y).lineTo(doc.page.width - 55, doc.y).strokeColor('#ccc').lineWidth(0.5).stroke();
+    doc.moveDown(0.8);
+
+    for (const raw of content.split('\n')) {
+      const line = raw.trimEnd();
+      if (!line.trim()) { doc.moveDown(0.3); continue; }
+
+      if (/^##\s/.test(line)) {
+        doc.moveDown(0.5);
+        doc.fontSize(13).fillColor('#1e3a5f').font('Helvetica-Bold').text(line.replace(/^##\s+/, ''));
+        const y = doc.y + 2;
+        doc.moveTo(55, y).lineTo(doc.page.width - 55, y).strokeColor('#3b82f6').lineWidth(0.6).stroke();
+        doc.moveDown(0.5);
+        doc.fillColor('#222').font('Helvetica').fontSize(10);
+      } else if (/^#\s/.test(line)) {
+        doc.moveDown(0.3);
+        doc.fontSize(11).fillColor('#333').font('Helvetica-Bold').text(line.replace(/^#\s+/, ''));
+        doc.font('Helvetica').fillColor('#222').fontSize(10);
+      } else if (/^[-•*]\s/.test(line)) {
+        doc.fontSize(10).fillColor('#222').font('Helvetica')
+           .text(`• ${line.replace(/^[-•*]\s+/, '')}`, { indent: 14, lineGap: 1.5 });
+      } else {
+        doc.fontSize(10).fillColor('#222').font('Helvetica').text(line, { lineGap: 2 });
+      }
+    }
+
+    // Page numbers
+    const range = doc.bufferedPageRange();
+    for (let i = 0; i < range.count; i++) {
+      doc.switchToPage(range.start + i);
+      doc.fontSize(8).fillColor('#aaa')
+         .text(`Page ${i + 1} of ${range.count}  |  BioPharma CRA Platform`,
+               55, doc.page.height - 38, { align: 'center', lineBreak: false });
+    }
+    doc.end();
+  });
+}
+
+async function makeExcel(deptName, title, content, period) {
+  const ExcelJS = require('exceljs');
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'BioPharma CRA Bot';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('Report', { properties: { tabColor: { argb: '1e3a5f' } } });
+  ws.columns = [{ width: 4 }, { width: 68 }];
+
+  const addMerged = (text, rowStyle) => {
+    const row = ws.addRow(['', text]);
+    ws.mergeCells(`A${row.number}:B${row.number}`);
+    if (rowStyle) Object.assign(row.getCell(1), rowStyle);
+    return row;
+  };
+
+  // Title block
+  addMerged(`BioPharma CRA Platform — ${deptName}`, {
+    font: { name: 'Calibri', bold: true, size: 15, color: { argb: 'FFFFFF' } },
+    fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: '1e3a5f' } },
+    alignment: { horizontal: 'center', vertical: 'middle' },
+  });
+  ws.getRow(1).height = 28;
+
+  addMerged(`${title}  |  ${period}`, {
+    font: { name: 'Calibri', size: 11, color: { argb: 'FFFFFF' } },
+    fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: '2d5a8f' } },
+    alignment: { horizontal: 'center' },
+  });
+  ws.getRow(2).height = 20;
+  ws.addRow([]);
+
+  for (const raw of content.split('\n')) {
+    const line = raw.trimEnd();
+    if (!line.trim()) { ws.addRow([]); continue; }
+
+    if (/^##?\s/.test(line)) {
+      const text = line.replace(/^##?\s+/, '');
+      ws.addRow([]);
+      const row = ws.addRow(['', text]);
+      ws.mergeCells(`A${row.number}:B${row.number}`);
+      row.getCell(1).font = { name: 'Calibri', bold: true, size: 12, color: { argb: '1e3a5f' } };
+      row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'e8f0fe' } };
+      row.height = 20;
+    } else if (/^[-•*]\s/.test(line)) {
+      const row = ws.addRow(['•', line.replace(/^[-•*]\s+/, '')]);
+      row.getCell(1).alignment = { horizontal: 'center' };
+      row.getCell(2).font = { name: 'Calibri', size: 10 };
+    } else {
+      const row = ws.addRow(['', line]);
+      ws.mergeCells(`A${row.number}:B${row.number}`);
+      row.getCell(1).font = { name: 'Calibri', size: 10 };
+      row.getCell(1).alignment = { wrapText: true };
+    }
+  }
+
+  ws.addRow([]);
+  const foot = ws.addRow(['', `Generated ${new Date().toLocaleString()} — BioPharma CRA Bot`]);
+  foot.getCell(2).font = { name: 'Calibri', size: 9, italic: true, color: { argb: '999999' } };
+
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+async function getSessionsByDept(deptId) {
+  const all = await fsCollection('telegramSessions');
+  return all.filter(s => s.currentDeptId === deptId && s.uid);
 }
 
 // ─── Safe send (HTML with plain-text fallback) ────────────────────────────────
@@ -343,6 +508,83 @@ bot.command('switch', async (ctx) => {
   );
 });
 
+// /report ── on-demand report generation
+bot.command('report', async (ctx) => {
+  const sess = await getSession(String(ctx.from.id));
+  if (!sess?.uid)          return ctx.reply('Please /start and login first.');
+  if (!sess?.currentDeptId) return ctx.reply('Select a department first with /start or /switch.');
+
+  return ctx.reply(
+    `📊 <b>Generate Report</b>\n\nChoose file format:`,
+    {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '📄 PDF Report',   callback_data: 'report:pdf'   },
+          { text: '📊 Excel Report', callback_data: 'report:excel' },
+        ]],
+      },
+    }
+  );
+});
+
+bot.action(/^report:(pdf|excel)$/, async (ctx) => {
+  await ctx.answerCbQuery('⏳ Generating...');
+  const tid    = String(ctx.from.id);
+  const format = ctx.match[1];
+  const sess   = await getSession(tid);
+
+  if (!sess?.uid || !sess?.currentDeptId)
+    return ctx.reply('Session expired. Use /start again.');
+
+  const depts = await getDepartments();
+  const dept  = depts.find(d => d.id === sess.currentDeptId);
+  if (!dept) return ctx.reply('Department not found. Use /start.');
+
+  await ctx.reply('⏳ Generating your report — this may take 20–30 seconds...');
+
+  try {
+    const now    = new Date();
+    const period = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    const title  = 'On-Demand Report';
+
+    const content = await generateReportContent(dept, 'on-demand', period);
+
+    // Save to Firestore
+    await fsAdd('reports', {
+      departmentId: sess.currentDeptId,
+      departmentName: dept.name,
+      type: 'on-demand',
+      content,
+      period,
+      generatedBy: sess.uid,
+      generatedAt: now.toISOString(),
+      source: 'telegram',
+    });
+
+    const dateStr = now.toISOString().slice(0, 10);
+    const safeName = dept.name.replace(/[^a-zA-Z0-9]/g, '_');
+
+    if (format === 'pdf') {
+      const buf = await makePDF(dept.name, title, content, period);
+      await ctx.replyWithDocument(
+        { source: buf, filename: `${safeName}_Report_${dateStr}.pdf` },
+        { caption: `📄 <b>${dept.name}</b> — ${period}`, parse_mode: 'HTML' }
+      );
+    } else {
+      const buf = await makeExcel(dept.name, title, content, period);
+      await ctx.replyWithDocument(
+        { source: buf, filename: `${safeName}_Report_${dateStr}.xlsx` },
+        { caption: `📊 <b>${dept.name}</b> — ${period}`, parse_mode: 'HTML' }
+      );
+    }
+
+  } catch (err) {
+    console.error('Report generation error:', err.message);
+    await ctx.reply('❌ Failed to generate report. Please try again later.');
+  }
+});
+
 // /logout
 bot.command('logout', async (ctx) => {
   await clearSession(String(ctx.from.id));
@@ -477,10 +719,51 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// ─── Express health check (starts immediately — before bot connect) ────────────
+// ─── Express (starts immediately — Render needs port open fast) ──────────────
 const app = express();
+app.use(express.json());
+
 app.get('/',       (_, res) => res.send('🤖 BioPharma CRA Bot — Running'));
 app.get('/health', (_, res) => res.json({ ok: true, uptime: process.uptime() }));
+
+// Called by the frontend after saving a report → delivers to logged-in Telegram users
+app.post('/deliver-report', async (req, res) => {
+  const { departmentId, departmentName, content, type, period } = req.body;
+  if (!departmentId || !content)
+    return res.status(400).json({ error: 'departmentId and content required' });
+
+  try {
+    const sessions = await getSessionsByDept(departmentId);
+    if (sessions.length === 0)
+      return res.json({ sent: 0, message: 'No active Telegram sessions for this department' });
+
+    const deptLabel = departmentName || departmentId;
+    const title     = `${type ? type.charAt(0).toUpperCase() + type.slice(1) + ' ' : ''}Report`;
+    const pdfBuf    = await makePDF(deptLabel, title, content, period || new Date().toLocaleDateString());
+    const safeName  = deptLabel.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename  = `${safeName}_${type || 'report'}_${new Date().toISOString().slice(0,10)}.pdf`;
+
+    let sent = 0;
+    for (const sess of sessions) {
+      try {
+        await bot.telegram.sendDocument(
+          sess.id,   // document ID = Telegram user ID
+          { source: pdfBuf, filename },
+          { caption: `📊 <b>${deptLabel}</b> — ${title}\n${period || ''}`, parse_mode: 'HTML' }
+        );
+        sent++;
+      } catch (e) {
+        console.error(`Failed to deliver to ${sess.id}:`, e.message);
+      }
+    }
+
+    console.log(`📬 Delivered ${title} to ${sent}/${sessions.length} Telegram users`);
+    res.json({ sent, total: sessions.length });
+  } catch (err) {
+    console.error('deliver-report error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 app.listen(PORT, () => console.log(`✅ Health server on port ${PORT}`));
 
 // ─── Launch ───────────────────────────────────────────────────────────────────

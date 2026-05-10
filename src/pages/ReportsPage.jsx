@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { subscribeToReports, saveReport, getAllDepartments, getReportSettings } from '../services/firestore';
+import { subscribeToReports, saveReport, getAllDepartments, getReportSettings, deliverReportToBot } from '../services/firestore';
 import { generateReport } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
@@ -405,13 +405,18 @@ export default function ReportsPage() {
         departmentName: dept.name,
       });
 
+      const period = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
       await saveReport({
         departmentId: dept.id,
         departmentName: dept.name,
         type: reportType,
         content,
+        period,
         generatedBy: user.uid,
       });
+
+      // Silently push to Telegram users logged into this department
+      deliverReportToBot(dept.id, dept.name, content, reportType, period);
 
       toast.success(`${reportType.charAt(0).toUpperCase() + reportType.slice(1)} report generated!`);
     } catch (err) {
