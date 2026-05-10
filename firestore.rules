@@ -1,21 +1,32 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Logged-in users access
     match /users/{userId} {
-      allow read, write: if request.auth != null;
-    }
-    match /departments/{deptId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
-    }
-    match /chats/{chatId} {
       allow read, write: if request.auth != null;
     }
     match /reports/{reportId} {
       allow read, write: if request.auth != null;
     }
+
+    // Departments — read publicly (telegram bot needs it), write needs login
+    match /departments/{deptId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Chats — allow public access (telegram bot writes from server)
+    match /chats/{chatId} {
+      allow read, write: if true;
+    }
+
+    // Telegram bot state — server-side only, public access needed
     match /telegramSessions/{sessionId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if true;
+    }
+    match /telegramPending/{userId} {
+      allow read, write: if true;
     }
   }
 }
