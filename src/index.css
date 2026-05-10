@@ -48,6 +48,38 @@
     transition: background-color 0.25s ease, color 0.25s ease;
   }
 
+  /* ── Select / Dropdown fix ───────────────────────────────────────────────── */
+  select {
+    color-scheme: dark;
+    background-color: #111827;
+    color: #f1f5f9;
+    appearance: auto;
+  }
+  select option {
+    background-color: #111827;
+    color: #f1f5f9;
+  }
+  select option:hover,
+  select option:focus,
+  select option:checked {
+    background-color: #1e40af;
+    color: #ffffff;
+  }
+  [data-theme="light"] select {
+    color-scheme: light;
+    background-color: #ffffff;
+    color: #1e293b;
+  }
+  [data-theme="light"] select option {
+    background-color: #ffffff;
+    color: #1e293b;
+  }
+  [data-theme="light"] select option:hover,
+  [data-theme="light"] select option:checked {
+    background-color: #dbeafe;
+    color: #1e3a8a;
+  }
+
   #root {
     width: 100%;
     min-height: 100vh;
