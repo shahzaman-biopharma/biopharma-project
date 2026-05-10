@@ -96,19 +96,44 @@ async function signIn(email, password) {
   );
   const d = await r.json();
   if (d.error) throw new Error(d.error.message);
-  return { uid: d.localId, email: d.email, displayName: d.displayName };
+  // idToken used to make authenticated Firestore reads
+  return { uid: d.localId, email: d.email, displayName: d.displayName, idToken: d.idToken };
+}
+
+// Authenticated Firestore read — uses user's idToken so security rules pass
+async function fsGetAuth(path, idToken) {
+  try {
+    const r = await fetch(`${FS}/${path}`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!r.ok) return null;
+    const doc = await r.json();
+    return doc.fields ? fromFields(doc.fields) : null;
+  } catch { return null; }
 }
 
 // ─── Data helpers ─────────────────────────────────────────────────────────────
 const getDepartments = () => fsCollection('departments');
-const getUserProfile = (uid) => fsGet(`users/${uid}`);
 
-// Session per Telegram user (not per dept)
-// telegramSessions/${tid} → { uid, email, displayName, role, currentDeptId, step, pendingDeptId, pendingEmail }
+// Session per Telegram user
+// { uid, email, displayName, role, assignedDepartments[], currentDeptId,
+//   step, pendingDeptId, pendingEmail, linkedAt }
 const getSession   = (tid) => fsGet(`telegramSessions/${tid}`);
 const mergeSession = (tid, data) => fsMerge(`telegramSessions/${tid}`, data);
 const putSession   = (tid, data) => fsPut(`telegramSessions/${tid}`, data);
 const clearSession = (tid) => fsDelete(`telegramSessions/${tid}`);
+
+// Access helpers that use CACHED session data (no extra Firestore reads)
+function sessHasAccess(sess, deptId) {
+  if (!sess?.role) return false;
+  if (sess.role === 'admin' || sess.role === 'superadmin') return true;
+  return (sess.assignedDepartments || []).includes(deptId);
+}
+function sessAccessibleDepts(depts, sess) {
+  if (!sess?.role) return [];
+  if (sess.role === 'admin' || sess.role === 'superadmin') return depts;
+  return depts.filter(d => (sess.assignedDepartments || []).includes(d.id));
+}
 
 async function getChatHistory(uid, deptId) {
   const doc = await fsGet(`chats/${uid}_${deptId}`);
@@ -201,17 +226,6 @@ function deptKeyboard(depts) {
   };
 }
 
-function getAccessible(depts, profile) {
-  const role = profile?.role;
-  if (role === 'admin' || role === 'superadmin') return depts;
-  return depts.filter(d => (profile?.assignedDepartments || []).includes(d.id));
-}
-
-function hasAccess(profile, deptId) {
-  const role = profile?.role;
-  return role === 'admin' || role === 'superadmin' ||
-         (profile?.assignedDepartments || []).includes(deptId);
-}
 
 async function enterDept(ctx, dept, sess) {
   const history  = await getChatHistory(sess.uid, dept.id);
@@ -244,13 +258,13 @@ bot.command('start', async (ctx) => {
   if (allDepts.length === 0)
     return ctx.reply('No departments available. Please contact your admin.');
 
-  // Validate existing session — if uid present but profile missing, wipe it
-  if (sess?.uid) {
-    const profile = await getUserProfile(sess.uid);
-    if (!profile) { await clearSession(tid); sess = null; }
+  // Validate session — old/corrupt sessions won't have role set
+  if (sess?.uid && !sess?.role) {
+    await clearSession(tid);
+    sess = null;
   }
 
-  // ── Already logged in AND already in a department → stay there
+  // ── Already logged in AND in a department → no need to show list
   if (sess?.uid && sess?.currentDeptId) {
     const dept = allDepts.find(d => d.id === sess.currentDeptId);
     return ctx.reply(
@@ -263,8 +277,7 @@ bot.command('start', async (ctx) => {
 
   // ── Logged in but no department picked yet
   if (sess?.uid) {
-    const profile = await getUserProfile(sess.uid);
-    const depts   = getAccessible(allDepts, profile);
+    const depts = sessAccessibleDepts(allDepts, sess);
     return ctx.reply(
       `👋 <b>Welcome back, ${sess.displayName}!</b>\n\nSelect a department:`,
       { parse_mode: 'HTML', reply_markup: deptKeyboard(depts) }
@@ -291,9 +304,8 @@ bot.action(/^dept:(.+)$/, async (ctx) => {
   if (!dept) return ctx.reply('Department not found. Use /start.');
 
   if (sess?.uid) {
-    // Already logged in — just check access and switch
-    const profile = await getUserProfile(sess.uid);
-    if (!hasAccess(profile, deptId)) {
+    // Already logged in — check cached access from session, no Firestore read needed
+    if (!sessHasAccess(sess, deptId)) {
       return ctx.reply(
         `❌ You don't have access to <b>${dept.name}</b>.\nContact your admin.`,
         { parse_mode: 'HTML' }
@@ -320,8 +332,7 @@ bot.command('switch', async (ctx) => {
     return ctx.reply('Please use /start to login first.');
 
   const allDepts = await getDepartments();
-  const profile  = await getUserProfile(sess.uid);
-  const depts    = getAccessible(allDepts, profile);
+  const depts    = sessAccessibleDepts(allDepts, sess);
 
   if (depts.length === 0)
     return ctx.reply('No departments available. Contact admin.');
@@ -382,13 +393,17 @@ bot.on('text', async (ctx) => {
     await ctx.reply('⏳ Verifying...');
     try {
       const auth    = await signIn(sess.pendingEmail, text);
-      const profile = await getUserProfile(auth.uid);
+      // Use idToken for authenticated read — bypasses Firestore security rules
+      const profile = await fsGetAuth(`users/${auth.uid}`, auth.idToken);
       const role    = profile?.role || 'user';
       const name    = auth.displayName || profile?.displayName || auth.email.split('@')[0];
+      const assignedDepartments = profile?.assignedDepartments || [];
       const depts   = await getDepartments();
       const dept    = depts.find(d => d.id === sess.pendingDeptId);
 
-      if (!hasAccess(profile, sess.pendingDeptId)) {
+      // Build a temp sess-like object to use sessHasAccess
+      const tempSess = { role, assignedDepartments };
+      if (!sessHasAccess(tempSess, sess.pendingDeptId)) {
         await mergeSession(tid, { step: null, pendingDeptId: null, pendingEmail: null });
         return ctx.reply(
           `❌ <b>Access Denied.</b>\n\nYou are not authorized for <b>${dept?.name || 'this department'}</b>.\nContact your admin.`,
@@ -398,6 +413,7 @@ bot.on('text', async (ctx) => {
 
       const newSess = {
         uid: auth.uid, email: auth.email, displayName: name, role,
+        assignedDepartments,          // cached so future access checks need no Firestore read
         currentDeptId: sess.pendingDeptId,
         step: null, pendingDeptId: null, pendingEmail: null,
         linkedAt: new Date().toISOString(),
@@ -432,10 +448,9 @@ bot.on('text', async (ctx) => {
   // ── No department selected yet
   if (!sess?.currentDeptId) {
     const allDepts = await getDepartments();
-    const profile  = await getUserProfile(sess.uid);
     return ctx.reply(
       'Select a department first:',
-      { reply_markup: deptKeyboard(getAccessible(allDepts, profile)) }
+      { reply_markup: deptKeyboard(sessAccessibleDepts(allDepts, sess)) }
     );
   }
 
