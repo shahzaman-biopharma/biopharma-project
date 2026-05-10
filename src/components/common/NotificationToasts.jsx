@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNotifications } from '../../context/NotificationsContext';
 import {
   UserPlus, Building2, UserCheck, UserMinus,
-  FileText, Shield, Trash2, X,
+  FileText, Shield, Trash2, X, ShieldCheck,
 } from 'lucide-react';
 
 // ─── Per-type visual config ───────────────────────────────────────────────────
@@ -14,6 +14,7 @@ const TYPE = {
   report_generated:    { icon: FileText,  color: '#06b6d4', label: 'Report Ready'   },
   role_changed:        { icon: Shield,    color: '#ec4899', label: 'Role Updated'   },
   department_deleted:  { icon: Trash2,    color: '#ef4444', label: 'Dept Deleted'   },
+  permission_changed:  { icon: ShieldCheck, color: '#f59e0b', label: 'Permissions'   },
 };
 
 const VISIBLE_MS  = 3400; // how long toast stays visible

@@ -217,6 +217,25 @@ export async function markNotificationRead(notifId, userId) {
   }
 }
 
+// ─── Dept User Permissions ────────────────────────────────────────────────────
+
+export async function updateDeptUserPermission(deptId, userId, permissions) {
+  await updateDoc(doc(db, 'departments', deptId), {
+    [`userPermissions.${userId}`]: permissions,
+  });
+}
+
+// ─── Admin Tab Permissions ────────────────────────────────────────────────────
+
+export async function getAdminTabPermissions() {
+  const snap = await getDoc(doc(db, 'settings', 'adminPermissions'));
+  return snap.exists() ? snap.data() : null;
+}
+
+export async function saveAdminTabPermissions(data) {
+  await setDoc(doc(db, 'settings', 'adminPermissions'), data, { merge: true });
+}
+
 export async function markAllNotificationsRead(userId, isAdmin) {
   const recipientIds = isAdmin ? [userId, 'admins'] : [userId];
   const q = query(

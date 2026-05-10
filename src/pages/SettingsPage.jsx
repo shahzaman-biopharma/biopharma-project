@@ -6,22 +6,26 @@ import {
   getAllUsers, updateUserProfile, deleteUser,
   getReportSettings, saveReportSettings,
   createNotification,
+  updateDeptUserPermission, getAdminTabPermissions, saveAdminTabPermissions,
 } from '../services/firestore';
 import { generateDepartmentPrompt } from '../services/openai';
 import {
   Settings, Plus, Trash2, Edit2, Users, Bot, Database, Save,
   Loader2, X, Shield, UserPlus, ChevronDown, ChevronUp,
   Sparkles, Key, Globe, FileText, Check, Eye, EyeOff,
+  ShieldCheck, Lock,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
-const TABS = [
+const ALL_TABS = [
   { id: 'departments', label: 'Departments', icon: Bot },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'reports', label: 'Reports', icon: FileText },
+  { id: 'access', label: 'Dept Access', icon: Lock },
 ];
+const SUPER_TAB = { id: 'permissions', label: 'Role Permissions', icon: ShieldCheck };
 
 const TIMEZONES = [
   { value: 'Asia/Karachi', label: 'Pakistan (PKT, UTC+5)' },
@@ -308,6 +312,281 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
   );
 }
 
+// ─── Permission Toggle Button ─────────────────────────────────────────────────
+
+function PermToggle({ label, active, saving, color, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={saving}
+      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+      style={active ? {
+        background: `${color}1a`,
+        border: `1px solid ${color}40`,
+        color,
+      } : {
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        color: '#475569',
+      }}
+    >
+      {saving ? <Loader2 size={11} className="animate-spin" /> : active ? <Check size={11} /> : <X size={11} />}
+      {label}
+    </button>
+  );
+}
+
+// ─── Dept Access Tab ──────────────────────────────────────────────────────────
+
+function DeptAccessTab({ departments, users, userProfile, onPermissionChange }) {
+  const [selectedDept, setSelectedDept] = useState(departments[0]?.id ?? null);
+  const [saving, setSaving] = useState({});
+
+  const dept = departments.find(d => d.id === selectedDept);
+  const deptUsers = users.filter(u => dept?.assignedUsers?.includes(u.id));
+
+  const handlePermToggle = async (userId, permType) => {
+    const current = dept?.userPermissions?.[userId] ?? { read: true, write: false };
+    const updated = { ...current, [permType]: !current[permType] };
+    const key = `${userId}_${permType}`;
+    setSaving(p => ({ ...p, [key]: true }));
+    try {
+      await updateDeptUserPermission(selectedDept, userId, updated);
+      onPermissionChange(selectedDept, userId, updated);
+      const permLabel = permType === 'write' ? 'write (bot commands)' : 'read';
+      createNotification({
+        type: 'permission_changed',
+        title: `${dept.name} Access ${updated[permType] ? 'Granted' : 'Revoked'}`,
+        message: `Your ${permLabel} permission in "${dept.name}" has been ${updated[permType] ? 'enabled' : 'disabled'}.`,
+        recipientId: userId,
+        triggeredBy: userProfile?.uid,
+        triggeredByName: userProfile?.displayName || userProfile?.email,
+        departmentId: selectedDept,
+        departmentName: dept.name,
+      }).catch(console.error);
+      toast.success('Permission updated');
+    } catch {
+      toast.error('Failed to update permission');
+    } finally {
+      setSaving(p => ({ ...p, [key]: false }));
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* Left: dept list */}
+      <div className="sm:col-span-1">
+        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 font-semibold">Select Department</p>
+        <div className="space-y-1.5">
+          {departments.map(d => (
+            <button
+              key={d.id}
+              onClick={() => setSelectedDept(d.id)}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all"
+              style={selectedDept === d.id ? {
+                background: 'rgba(59,130,246,0.15)',
+                border: '1px solid rgba(59,130,246,0.3)',
+                color: '#60a5fa',
+              } : {
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                color: '#64748b',
+              }}
+            >
+              <Bot size={13} className="flex-shrink-0" />
+              <span className="flex-1 truncate text-sm font-medium">{d.name}</span>
+              {d.tag && (
+                <span className="text-xs px-1.5 py-0.5 rounded font-bold flex-shrink-0"
+                  style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6' }}>
+                  {d.tag}
+                </span>
+              )}
+            </button>
+          ))}
+          {departments.length === 0 && (
+            <p className="text-slate-600 text-xs py-6 text-center">No departments yet.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Right: user permissions */}
+      <div className="sm:col-span-2">
+        {dept ? (
+          <>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 font-semibold">
+              Access Control — {dept.name}
+            </p>
+            {deptUsers.length === 0 ? (
+              <div className="text-center py-10 rounded-2xl"
+                style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <Users size={28} className="text-slate-600 mx-auto mb-2" />
+                <p className="text-slate-500 text-sm">No users assigned to this department.</p>
+                <p className="text-slate-600 text-xs mt-1">Assign users via the Departments tab.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {deptUsers.map(u => {
+                  const perms = dept?.userPermissions?.[u.id] ?? { read: true, write: false };
+                  return (
+                    <div key={u.id} className="flex items-center gap-3 p-3.5 rounded-xl"
+                      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                        style={{ background: 'linear-gradient(135deg, #3b82f6, #06b6d4)' }}>
+                        {u.displayName?.[0]?.toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium">{u.displayName}</p>
+                        <p className="text-slate-500 text-xs">{u.email}</p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <PermToggle
+                          label="Read"
+                          active={perms.read}
+                          saving={!!saving[`${u.id}_read`]}
+                          color="#10b981"
+                          onClick={() => handlePermToggle(u.id, 'read')}
+                        />
+                        <PermToggle
+                          label="Write"
+                          active={perms.write}
+                          saving={!!saving[`${u.id}_write`]}
+                          color="#f59e0b"
+                          onClick={() => handlePermToggle(u.id, 'write')}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="mt-4 p-3 rounded-xl"
+              style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <p className="text-slate-500 text-xs font-medium mb-1.5">Permission Guide</p>
+              <div className="space-y-0.5 text-xs">
+                <p className="text-slate-500">
+                  <span className="text-emerald-400 font-semibold">Read</span> — can view data and query the AI bot
+                </p>
+                <p className="text-slate-500">
+                  <span className="text-yellow-400 font-semibold">Write</span> — can add, update, delete records via bot commands
+                </p>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center justify-center h-40 rounded-2xl"
+            style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <p className="text-slate-600 text-sm">Select a department to manage access</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Role Permissions Tab (superadmin only) ───────────────────────────────────
+
+function RolePermissionsTab({ adminTabPerms, onSave, saving }) {
+  const [perms, setPerms] = useState({ ...adminTabPerms });
+
+  const CONFIGURABLE = [
+    { id: 'departments', label: 'Departments', icon: Bot, desc: 'Create, edit and delete departments and AI bot configs' },
+    { id: 'users', label: 'Users', icon: Users, desc: 'Manage user accounts, roles, and create new users' },
+    { id: 'reports', label: 'Reports', icon: FileText, desc: 'View report history and configure auto-scheduling' },
+    { id: 'access', label: 'Dept Access', icon: Lock, desc: 'Manage read/write bot permissions for users in departments' },
+  ];
+
+  const isOn = (id) => perms[id] !== false;
+  const toggle = (id) => setPerms(p => ({ ...p, [id]: !isOn(id) }));
+
+  return (
+    <div className="max-w-2xl">
+      <div className="glass rounded-2xl p-5">
+        <div className="flex items-center gap-2 mb-1">
+          <ShieldCheck size={15} className="text-yellow-400" />
+          <h2 className="text-white font-semibold">Admin Tab Permissions</h2>
+        </div>
+        <p className="text-slate-400 text-xs mb-5">
+          Choose which Settings tabs admins can access. SuperAdmin always sees all tabs.
+        </p>
+
+        <div className="space-y-2.5">
+          {CONFIGURABLE.map(item => (
+            <div
+              key={item.id}
+              className="flex items-center gap-4 p-4 rounded-xl transition-all"
+              style={{
+                background: isOn(item.id) ? 'rgba(59,130,246,0.06)' : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${isOn(item.id) ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.07)'}`,
+              }}
+            >
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{
+                  background: isOn(item.id) ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.05)',
+                  border: `1px solid ${isOn(item.id) ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.08)'}`,
+                }}>
+                <item.icon size={15} className={isOn(item.id) ? 'text-blue-400' : 'text-slate-500'} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium" style={{ color: isOn(item.id) ? '#f1f5f9' : '#475569' }}>
+                  {item.label}
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: isOn(item.id) ? '#64748b' : '#334155' }}>
+                  {item.desc}
+                </p>
+              </div>
+              {/* Toggle switch */}
+              <button
+                onClick={() => toggle(item.id)}
+                className="flex-shrink-0"
+                style={{ width: 40, height: 22, position: 'relative' }}
+                aria-label={`Toggle ${item.label}`}
+              >
+                <div style={{
+                  width: 40, height: 22, borderRadius: 11,
+                  background: isOn(item.id) ? '#3b82f6' : 'rgba(255,255,255,0.1)',
+                  border: `1px solid ${isOn(item.id) ? '#2563eb' : 'rgba(255,255,255,0.15)'}`,
+                  transition: 'background 0.2s, border-color 0.2s',
+                  position: 'relative',
+                }}>
+                  <div style={{
+                    position: 'absolute',
+                    top: 2,
+                    left: isOn(item.id) ? 20 : 2,
+                    width: 16, height: 16, borderRadius: 8,
+                    background: isOn(item.id) ? 'white' : 'rgba(255,255,255,0.4)',
+                    transition: 'left 0.2s, background 0.2s',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                  }} />
+                </div>
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 p-3 rounded-xl"
+          style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)' }}>
+          <p className="text-yellow-400 text-xs font-medium mb-1">Note</p>
+          <p className="text-slate-400 text-xs">
+            Changes take effect immediately. Admins may need to reload Settings to see updated tabs.
+            SuperAdmin always retains full access.
+          </p>
+        </div>
+
+        <div className="flex justify-end mt-5">
+          <button
+            onClick={() => onSave(perms)}
+            disabled={saving}
+            className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white gradient-btn disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            Save Permissions
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Settings Page ───────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -338,6 +617,8 @@ export default function SettingsPage() {
   const [createForm, setCreateForm] = useState({ name: '', email: '', password: '', role: 'user' });
   const [showCreatePwd, setShowCreatePwd] = useState(false);
   const [visiblePasswords, setVisiblePasswords] = useState({});
+  const [adminTabPerms, setAdminTabPerms] = useState({ departments: true, users: true, reports: true, access: true });
+  const [savingAdminPerms, setSavingAdminPerms] = useState(false);
 
   if (!isAdmin) return <Navigate to="/dashboard" replace />;
 
@@ -358,6 +639,10 @@ export default function SettingsPage() {
       } catch {
         // settings collection not accessible yet — rules not deployed
       }
+      try {
+        const ap = await getAdminTabPermissions();
+        if (ap) setAdminTabPerms(ap);
+      } catch { /* no adminPermissions doc yet — use defaults */ }
       setLoading(false);
     };
     load();
@@ -520,6 +805,34 @@ export default function SettingsPage() {
     toast.success('User removed from database');
   };
 
+  const handlePermissionChange = (deptId, userId, permissions) => {
+    setDepartments(prev => prev.map(d => d.id !== deptId ? d : {
+      ...d,
+      userPermissions: { ...(d.userPermissions ?? {}), [userId]: permissions },
+    }));
+  };
+
+  const handleSaveAdminPerms = async (perms) => {
+    setSavingAdminPerms(true);
+    try {
+      await saveAdminTabPermissions(perms);
+      setAdminTabPerms(perms);
+      toast.success('Permissions saved!');
+      createNotification({
+        type: 'permission_changed',
+        title: 'Settings Access Updated',
+        message: 'Admin tab permissions in Settings have been updated by Super Admin.',
+        recipientId: 'admins',
+        triggeredBy: userProfile?.uid,
+        triggeredByName: userProfile?.displayName || userProfile?.email,
+      }).catch(console.error);
+    } catch {
+      toast.error('Failed to save permissions');
+    } finally {
+      setSavingAdminPerms(false);
+    }
+  };
+
   const handleCreateUser = async () => {
     const { name, email, password, role } = createForm;
     if (!name || !email || !password) { toast.error('All fields are required'); return; }
@@ -585,6 +898,10 @@ export default function SettingsPage() {
     }
   };
 
+  const visibleTabs = isSuperAdmin
+    ? [...ALL_TABS, SUPER_TAB]
+    : ALL_TABS.filter(t => adminTabPerms[t.id] !== false);
+
   return (
     <div className="p-4 sm:p-6">
       {/* Header */}
@@ -610,7 +927,7 @@ export default function SettingsPage() {
 
       {/* Tabs — scrollable on mobile */}
       <div className="flex gap-1 mb-5 border-b overflow-x-auto pb-px" style={{ borderColor: 'rgba(59,130,246,0.1)' }}>
-        {TABS.map(({ id, label, icon: Icon }) => (
+        {visibleTabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -909,7 +1226,7 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
-      ) : (
+      ) : tab === 'reports' ? (
         /* ─── REPORTS SETTINGS TAB ─── */
         <div className="space-y-6 max-w-3xl">
 
@@ -1127,7 +1444,27 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
-      )}
+      ) : tab === 'access' ? (
+        /* ─── DEPT ACCESS TAB ─── */
+        <div className="glass-card rounded-2xl p-4 sm:p-6">
+          <h2 className="text-white font-semibold flex items-center gap-2 mb-5">
+            <Lock size={16} className="text-blue-400" /> Department Access Control
+          </h2>
+          <DeptAccessTab
+            departments={departments}
+            users={users}
+            userProfile={userProfile}
+            onPermissionChange={handlePermissionChange}
+          />
+        </div>
+      ) : tab === 'permissions' ? (
+        /* ─── ROLE PERMISSIONS TAB (superadmin only) ─── */
+        <RolePermissionsTab
+          adminTabPerms={adminTabPerms}
+          onSave={handleSaveAdminPerms}
+          saving={savingAdminPerms}
+        />
+      ) : null}
     </div>
   );
 }

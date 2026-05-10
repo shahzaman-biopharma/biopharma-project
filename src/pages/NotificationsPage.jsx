@@ -2,7 +2,7 @@ import { useNotifications } from '../context/NotificationsContext';
 import {
   Bell, BellOff,
   UserPlus, Building2, UserCheck, UserMinus,
-  FileText, Shield, Trash2,
+  FileText, Shield, Trash2, ShieldCheck,
 } from 'lucide-react';
 
 // ─── All business notification types ─────────────────────────────────────────
@@ -14,6 +14,7 @@ const TYPE = {
   report_generated:    { icon: FileText,  color: '#06b6d4', bg: 'rgba(6,182,212,0.12)',  border: 'rgba(6,182,212,0.25)',  label: 'Report Ready'   },
   role_changed:        { icon: Shield,    color: '#ec4899', bg: 'rgba(236,72,153,0.12)', border: 'rgba(236,72,153,0.25)', label: 'Role Updated'   },
   department_deleted:  { icon: Trash2,    color: '#ef4444', bg: 'rgba(239,68,68,0.12)',  border: 'rgba(239,68,68,0.25)',  label: 'Dept Deleted'   },
+  permission_changed:  { icon: ShieldCheck, color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.25)', label: 'Permissions'   },
 };
 
 function timeAgo(ts) {
