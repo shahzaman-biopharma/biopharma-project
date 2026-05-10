@@ -169,33 +169,35 @@ export default function ReportsPage() {
     .filter(r => filter === 'all' || r.type === filter);
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <FileText size={20} className="text-blue-400" />
+          <h1 className="text-lg sm:text-xl font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <FileText size={19} className="text-blue-400" />
             Reports
           </h1>
-          <p className="text-slate-400 text-sm mt-1">Weekly & monthly AI-generated department reports</p>
+          <p className="text-xs sm:text-sm mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+            Weekly & monthly AI-generated department reports
+          </p>
         </div>
       </div>
 
       {/* Generate panel (admin only) */}
       {isAdmin && (
-        <div className="glass rounded-2xl p-5 mb-6">
-          <h2 className="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+        <div className="glass rounded-2xl p-4 sm:p-5 mb-5">
+          <h2 className="font-semibold text-sm mb-4 flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <Sparkles size={14} className="text-blue-400" />
             Generate New Report
           </h2>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex-1 min-w-40">
-              <label className="block text-xs text-slate-400 mb-1.5">Department</label>
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-end gap-3">
+            <div className="flex-1 min-w-0 sm:min-w-40">
+              <label className="block text-xs mb-1.5" style={{ color: 'var(--text-secondary)' }}>Department</label>
               <select
                 value={selectedDept}
                 onChange={e => setSelectedDept(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl text-white text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.2)' }}
+                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
+                style={{ border: '1px solid rgba(59,130,246,0.2)' }}
               >
                 <option value="">Select department...</option>
                 {departments.map(d => (
@@ -204,20 +206,17 @@ export default function ReportsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1.5">Report Type</label>
+              <label className="block text-xs mb-1.5" style={{ color: 'var(--text-secondary)' }}>Report Type</label>
               <div className="flex gap-2">
                 {['weekly', 'monthly'].map(type => (
                   <button
                     key={type}
                     onClick={() => setReportType(type)}
-                    className="px-4 py-2.5 rounded-xl text-sm font-medium capitalize transition-all"
+                    className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-sm font-medium capitalize transition-all"
                     style={reportType === type ? {
-                      background: 'linear-gradient(135deg, #3b82f6, #06b6d4)',
-                      color: 'white',
+                      background: 'linear-gradient(135deg, #3b82f6, #06b6d4)', color: 'white',
                     } : {
-                      background: 'rgba(255,255,255,0.05)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      color: '#94a3b8',
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8',
                     }}
                   >
                     {type}
@@ -228,39 +227,33 @@ export default function ReportsPage() {
             <button
               onClick={handleGenerate}
               disabled={generating || !selectedDept}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white gradient-btn disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white gradient-btn disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {generating ? (
-                <><Loader2 size={15} className="animate-spin" /> Generating...</>
-              ) : (
-                <><Plus size={15} /> Generate</>
-              )}
+              {generating ? <><Loader2 size={15} className="animate-spin" /> Generating...</> : <><Plus size={15} /> Generate</>}
             </button>
           </div>
         </div>
       )}
 
       {/* Filter tabs */}
-      <div className="flex gap-2 mb-5">
+      <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1">
         {['all', 'weekly', 'monthly'].map(f => (
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className="px-4 py-2 rounded-xl text-sm font-medium capitalize transition-all"
+            className="px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium capitalize transition-all whitespace-nowrap flex-shrink-0"
             style={filter === f ? {
-              background: 'rgba(59,130,246,0.15)',
-              border: '1px solid rgba(59,130,246,0.3)',
-              color: '#60a5fa',
+              background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.3)', color: '#60a5fa',
             } : {
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: '#64748b',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: '#64748b',
             }}
           >
-            {f === 'all' ? 'All Reports' : f}
+            {f === 'all' ? 'All' : f}
           </button>
         ))}
-        <span className="ml-auto text-xs text-slate-500 flex items-center">{filtered.length} report{filtered.length !== 1 ? 's' : ''}</span>
+        <span className="ml-auto text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+          {filtered.length} report{filtered.length !== 1 ? 's' : ''}
+        </span>
       </div>
 
       {/* Reports list */}

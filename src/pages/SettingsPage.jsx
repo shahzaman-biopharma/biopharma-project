@@ -282,7 +282,7 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
               onChange={setNested('telegram', 'botToken')}
               placeholder="7xxxxxxxxxx:AAAAAAAAAAAAA..." type="password" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-400 mb-1.5 block">Bot Username</label>
               <input className={inputCls} style={inputStyle} value={form.telegram.botUsername}
@@ -565,38 +565,41 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center flex-shrink-0"
           style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.25)' }}>
-          <Settings size={20} className="text-purple-400" />
+          <Settings size={18} className="text-purple-400" />
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-white">Settings</h1>
-          <p className="text-slate-400 text-sm">Manage departments, users, and system configuration</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg sm:text-xl font-bold" style={{ color: 'var(--text-primary)' }}>Settings</h1>
+          <p className="text-xs sm:text-sm hidden sm:block" style={{ color: 'var(--text-secondary)' }}>
+            Manage departments, users, and system configuration
+          </p>
         </div>
         {isSuperAdmin && (
-          <div className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-yellow-400"
+          <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs text-yellow-400 flex-shrink-0"
             style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.2)' }}>
-            <Shield size={12} /> Super Admin
+            <Shield size={11} />
+            <span className="hidden sm:inline">Super Admin</span>
           </div>
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 mb-6 border-b" style={{ borderColor: 'rgba(59,130,246,0.1)' }}>
+      {/* Tabs — scrollable on mobile */}
+      <div className="flex gap-1 mb-5 border-b overflow-x-auto pb-px" style={{ borderColor: 'rgba(59,130,246,0.1)' }}>
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-all -mb-px"
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-medium transition-all -mb-px whitespace-nowrap flex-shrink-0"
             style={tab === id ? {
               color: '#60a5fa',
               borderBottom: '2px solid #3b82f6',
             } : { color: '#64748b' }}
           >
-            <Icon size={15} />
+            <Icon size={14} />
             {label}
           </button>
         ))}
@@ -622,7 +625,7 @@ export default function SettingsPage() {
 
           {/* Create/Edit Form */}
           {showForm && (
-            <div className="glass rounded-2xl p-6 mb-6">
+            <div className="glass rounded-2xl p-4 sm:p-6 mb-6">
               <h2 className="text-white font-semibold mb-5">
                 {editingDept ? `Edit: ${editingDept.name}` : 'Create New Department'}
               </h2>
@@ -640,26 +643,26 @@ export default function SettingsPage() {
             {departments.map(dept => (
               <div key={dept.id} className="glass-card rounded-2xl overflow-hidden">
                 <div
-                  className="flex items-center gap-4 p-5 cursor-pointer"
+                  className="flex items-center gap-3 p-4 sm:p-5 cursor-pointer"
                   onClick={() => setExpandedDept(expandedDept === dept.id ? null : dept.id)}
                 >
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center flex-shrink-0"
                     style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.2)' }}>
-                    <Bot size={18} className="text-blue-400" />
+                    <Bot size={17} className="text-blue-400" />
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-white font-semibold">{dept.name}</h3>
+                      <h3 className="text-white font-semibold text-sm truncate">{dept.name}</h3>
                       {dept.tag && (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-bold text-blue-400"
+                        <span className="px-2 py-0.5 rounded-full text-xs font-bold text-blue-400 flex-shrink-0"
                           style={{ background: 'rgba(59,130,246,0.12)' }}>{dept.tag}</span>
                       )}
                     </div>
-                    <p className="text-slate-500 text-xs mt-0.5">{dept.description?.substring(0, 80)}</p>
+                    <p className="text-slate-500 text-xs mt-0.5 truncate">{dept.description?.substring(0, 80)}</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">{dept.dataSources?.length || 0} sources</span>
-                    <span className="text-xs text-slate-500">{dept.assignedUsers?.length || 0} users</span>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-xs text-slate-500 hidden sm:inline">{dept.dataSources?.length || 0} src</span>
+                    <span className="text-xs text-slate-500 hidden sm:inline">{dept.assignedUsers?.length || 0} usr</span>
                     {expandedDept === dept.id ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
                   </div>
                 </div>
@@ -682,7 +685,7 @@ export default function SettingsPage() {
                         <Trash2 size={12} /> Delete
                       </button>
                     </div>
-                    <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                       <div>
                         <p className="text-slate-500 mb-1">Data Sources</p>
                         {dept.dataSources?.length ? dept.dataSources.map(s => (
@@ -735,7 +738,7 @@ export default function SettingsPage() {
               <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                 <UserPlus size={15} className="text-blue-400" /> New User
               </h3>
-              <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                 <div>
                   <label className="text-xs text-slate-400 mb-1.5 block">Full Name *</label>
                   <input
@@ -814,8 +817,8 @@ export default function SettingsPage() {
           {/* User list */}
           <div className="space-y-3">
             {users.map(u => (
-              <div key={u.id} className="glass-card rounded-2xl p-5 flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+              <div key={u.id} className="glass-card rounded-2xl p-4 sm:p-5 flex items-center gap-3 sm:gap-4">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
                   style={{ background: 'linear-gradient(135deg, #3b82f6, #06b6d4)' }}>
                   {u.displayName?.[0]?.toUpperCase()}
                 </div>
@@ -890,7 +893,7 @@ export default function SettingsPage() {
         <div className="space-y-6 max-w-3xl">
 
           {/* Auto-Schedule Card */}
-          <div className="glass rounded-2xl p-6">
+          <div className="glass rounded-2xl p-4 sm:p-6">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-white font-semibold flex items-center gap-2">
                 <FileText size={16} className="text-blue-400" /> Auto-Report Schedule
@@ -910,9 +913,9 @@ export default function SettingsPage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Timezone */}
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <label className="text-xs text-slate-400 mb-1.5 block">Timezone</label>
                 <select
                   value={reportSettings.timezone}
@@ -1019,7 +1022,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Per-Department Access Control */}
-          <div className="glass rounded-2xl p-6">
+          <div className="glass rounded-2xl p-4 sm:p-6">
             <h2 className="text-white font-semibold flex items-center gap-2 mb-5">
               <Shield size={16} className="text-yellow-400" /> Report Access Control
             </h2>
@@ -1048,9 +1051,9 @@ export default function SettingsPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-4 text-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-xs">
                       {/* Allow admins toggle */}
-                      <label className="flex items-center gap-2 cursor-pointer">
+                      <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
                         <input
                           type="checkbox"
                           checked={access.allowAdmins !== false}
@@ -1061,10 +1064,10 @@ export default function SettingsPage() {
                       </label>
 
                       {/* Specific users */}
-                      <div className="flex-1">
-                        <span className="text-slate-500 mr-2">Users:</span>
+                      <div className="flex flex-wrap gap-x-3 gap-y-1.5 items-center">
+                        <span className="text-slate-500">Users:</span>
                         {users.filter(u => u.role === 'user').map(u => (
-                          <label key={u.id} className="inline-flex items-center gap-1 mr-3 cursor-pointer">
+                          <label key={u.id} className="inline-flex items-center gap-1 cursor-pointer">
                             <input
                               type="checkbox"
                               checked={(access.allowedUsers || []).includes(u.id)}

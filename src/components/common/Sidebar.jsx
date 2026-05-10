@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import {
   Dna, LayoutDashboard, FileText, Settings,
-  LogOut, ChevronRight, Shield, Sun, Moon,
+  LogOut, ChevronRight, Shield, Sun, Moon, X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -16,7 +16,7 @@ const adminItems = [
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ onClose }) {
   const { userProfile, logout, isSuperAdmin, isAdmin } = useAuth();
   const { isDark, toggle } = useTheme();
   const navigate = useNavigate();
@@ -27,6 +27,10 @@ export default function Sidebar() {
     navigate('/login');
   };
 
+  const handleNav = () => {
+    if (onClose) onClose();
+  };
+
   return (
     <aside className="flex flex-col h-full" style={{
       width: '240px',
@@ -34,29 +38,41 @@ export default function Sidebar() {
       borderRight: '1px solid var(--border-clr)',
       transition: 'background 0.25s ease, border-color 0.25s ease',
     }}>
-      {/* Logo + Theme Toggle */}
-      <div className="flex items-center gap-3 px-6 py-5 border-b" style={{ borderColor: 'var(--border-clr)' }}>
-        <div className="flex items-center justify-center w-9 h-9 rounded-xl flex-shrink-0"
+      {/* Logo + Theme Toggle + Mobile Close */}
+      <div className="flex items-center gap-3 px-5 py-4 border-b" style={{ borderColor: 'var(--border-clr)' }}>
+        <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0"
           style={{ background: 'linear-gradient(135deg, #3b82f6, #06b6d4)' }}>
-          <Dna size={20} className="text-white" />
+          <Dna size={17} className="text-white" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-bold text-sm leading-none" style={{ color: 'var(--text-primary)' }}>BioPharma</p>
           <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>CRA Platform</p>
         </div>
+
         {/* Theme Toggle */}
         <button
           onClick={toggle}
-          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-          className="w-8 h-8 rounded-lg flex items-center justify-center transition-all flex-shrink-0"
+          title={isDark ? 'Light mode' : 'Dark mode'}
+          className="w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0"
           style={{
             background: isDark ? 'rgba(251,191,36,0.12)' : 'rgba(59,130,246,0.12)',
             border: isDark ? '1px solid rgba(251,191,36,0.25)' : '1px solid rgba(59,130,246,0.25)',
             color: isDark ? '#fbbf24' : '#3b82f6',
           }}
         >
-          {isDark ? <Sun size={15} /> : <Moon size={15} />}
+          {isDark ? <Sun size={13} /> : <Moon size={13} />}
         </button>
+
+        {/* Mobile close button */}
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="lg:hidden w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors"
+            style={{ color: 'var(--text-muted)', background: 'rgba(255,255,255,0.05)' }}
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       {/* Nav */}
@@ -68,9 +84,10 @@ export default function Sidebar() {
           <NavLink
             key={to}
             to={to}
+            onClick={handleNav}
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group ${
-                isActive ? '' : 'hover:text-white'
+                isActive ? '' : ''
               }`
             }
             style={({ isActive }) => isActive ? {
@@ -81,9 +98,9 @@ export default function Sidebar() {
           >
             {({ isActive }) => (
               <>
-                <Icon size={18} className={isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-blue-400'} />
+                <Icon size={17} className={isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-blue-400'} />
                 {label}
-                {isActive && <ChevronRight size={14} className="ml-auto text-blue-400" />}
+                {isActive && <ChevronRight size={13} className="ml-auto text-blue-400" />}
               </>
             )}
           </NavLink>
@@ -98,9 +115,10 @@ export default function Sidebar() {
               <NavLink
                 key={to}
                 to={to}
+                onClick={handleNav}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group ${
-                    isActive ? '' : 'hover:text-white'
+                    isActive ? '' : ''
                   }`
                 }
                 style={({ isActive }) => isActive ? {
@@ -111,9 +129,9 @@ export default function Sidebar() {
               >
                 {({ isActive }) => (
                   <>
-                    <Icon size={18} className={isActive ? 'text-purple-400' : 'text-slate-500 group-hover:text-purple-400'} />
+                    <Icon size={17} className={isActive ? 'text-purple-400' : 'text-slate-500 group-hover:text-purple-400'} />
                     {label}
-                    {isActive && <ChevronRight size={14} className="ml-auto text-purple-400" />}
+                    {isActive && <ChevronRight size={13} className="ml-auto text-purple-400" />}
                   </>
                 )}
               </NavLink>
@@ -123,10 +141,10 @@ export default function Sidebar() {
       </nav>
 
       {/* User info */}
-      <div className="px-3 pb-4 border-t pt-4" style={{ borderColor: 'var(--border-clr)' }}>
-        <div className="flex items-center gap-3 px-3 py-2 rounded-xl mb-2"
+      <div className="px-3 pb-4 border-t pt-3" style={{ borderColor: 'var(--border-clr)' }}>
+        <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl mb-2"
           style={{ background: 'var(--hover-bg)' }}>
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+          <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
             style={{ background: 'linear-gradient(135deg, #3b82f6, #06b6d4)' }}>
             {userProfile?.displayName?.[0]?.toUpperCase() || 'U'}
           </div>
@@ -135,7 +153,7 @@ export default function Sidebar() {
               {userProfile?.displayName}
             </p>
             <div className="flex items-center gap-1">
-              {isSuperAdmin && <Shield size={10} className="text-yellow-400" />}
+              {isSuperAdmin && <Shield size={9} className="text-yellow-400" />}
               <p className="text-xs capitalize" style={{ color: 'var(--text-muted)' }}>
                 {userProfile?.role || 'user'}
               </p>
@@ -144,13 +162,11 @@ export default function Sidebar() {
         </div>
         <button
           onClick={handleLogout}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm w-full transition-colors hover:bg-red-400/5"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm w-full transition-colors group"
           style={{ color: 'var(--text-secondary)' }}
-          onMouseEnter={e => e.currentTarget.style.color = '#f87171'}
-          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-secondary)'}
         >
-          <LogOut size={16} />
-          Sign out
+          <LogOut size={15} className="group-hover:text-red-400 transition-colors" />
+          <span className="group-hover:text-red-400 transition-colors">Sign out</span>
         </button>
       </div>
     </aside>

@@ -430,41 +430,40 @@ export default function BotPage() {
   return (
     <div className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
       {/* Header */}
-      <div className="flex items-center gap-4 px-6 py-4 border-b"
+      <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-6 py-3 sm:py-4 border-b flex-shrink-0"
         style={{ borderColor: 'var(--border-clr)', background: 'var(--sidebar-bg)' }}>
         <button
           onClick={() => navigate('/dashboard')}
-          className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors"
-          style={{
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: 'var(--text-secondary)',
-          }}
+          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0"
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}
         >
-          <ArrowLeft size={16} />
+          <ArrowLeft size={15} />
         </button>
 
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
           style={{ background: 'linear-gradient(135deg, #3b82f6, #06b6d4)' }}>
-          <Bot size={20} className="text-white" />
+          <Bot size={18} className="text-white" />
         </div>
 
-        <div className="flex-1">
-          <h1 className="font-semibold" style={{ color: 'var(--text-primary)' }}>{department?.name}</h1>
-          <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-muted)' }}>
-            <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-            <span>AI Assistant Active</span>
+        <div className="flex-1 min-w-0">
+          <h1 className="font-semibold text-sm sm:text-base truncate" style={{ color: 'var(--text-primary)' }}>
+            {department?.name}
+          </h1>
+          <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+            <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+            <span className="hidden sm:inline">AI Assistant Active</span>
+            <span className="sm:hidden">Active</span>
             {dataLoaded && department?.dataSources?.length > 0 && (
               <>
-                <span>•</span>
-                <Database size={10} />
-                <span>{department.dataSources.length} data source{department.dataSources.length > 1 ? 's' : ''} loaded</span>
+                <span className="hidden sm:inline">•</span>
+                <Database size={10} className="hidden sm:block" />
+                <span className="hidden sm:inline">{department.dataSources.length} source{department.dataSources.length > 1 ? 's' : ''}</span>
               </>
             )}
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs"
+        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs flex-shrink-0"
           style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'var(--text-secondary)' }}>
           <FileSpreadsheet size={11} className="text-blue-400" />
           PDF / Excel
@@ -473,19 +472,15 @@ export default function BotPage() {
         <button
           onClick={clearChat}
           title="Clear chat"
-          className="w-9 h-9 rounded-xl flex items-center justify-center transition-colors"
-          style={{
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: 'var(--text-secondary)',
-          }}
+          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0"
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}
         >
-          <RefreshCw size={15} />
+          <RefreshCw size={14} />
         </button>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
         {messages.map((msg, i) => (
           <ChatMessage key={i} msg={msg} />
         ))}
@@ -509,30 +504,30 @@ export default function BotPage() {
       </div>
 
       {/* Input bar */}
-      <div className="px-6 pb-6 pt-3 border-t" style={{ borderColor: 'var(--border-clr)' }}>
-        <div className="flex items-end gap-3 px-4 py-3 rounded-2xl"
+      <div className="px-3 sm:px-6 pb-4 sm:pb-6 pt-3 border-t flex-shrink-0" style={{ borderColor: 'var(--border-clr)' }}>
+        <div className="flex items-end gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl"
           style={{ background: 'var(--glass-bg)', border: '1px solid rgba(59,130,246,0.2)' }}>
-          <Sparkles size={16} className="text-blue-400 flex-shrink-0 mb-1" />
+          <Sparkles size={15} className="text-blue-400 flex-shrink-0 mb-1" />
           <textarea
             ref={inputRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
-            placeholder={`Ask ${department?.name} anything... or say "generate Excel report"`}
+            placeholder={`Ask anything... or "generate Excel report"`}
             rows={1}
             className="flex-1 bg-transparent placeholder-slate-500 text-sm outline-none resize-none"
-            style={{ color: 'var(--text-primary)', maxHeight: '120px' }}
+            style={{ color: 'var(--text-primary)', maxHeight: '100px' }}
           />
           <button
             onClick={() => handleSend()}
             disabled={!input.trim() || loading}
-            className="w-9 h-9 rounded-xl flex items-center justify-center gradient-btn disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+            className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center gradient-btn disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
           >
-            <Send size={15} className="text-white" />
+            <Send size={14} className="text-white" />
           </button>
         </div>
-        <p className="text-xs text-center mt-2" style={{ color: 'var(--text-muted)' }}>
-          Enter to send • Shift+Enter for new line • Ask for PDF/Excel to get downloadable files
+        <p className="text-xs text-center mt-1.5 hidden sm:block" style={{ color: 'var(--text-muted)' }}>
+          Enter to send • Shift+Enter for new line • Ask for PDF/Excel to download files
         </p>
       </div>
     </div>
