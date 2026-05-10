@@ -467,16 +467,35 @@ app.listen(PORT, () => console.log(`✅ Health server on port ${PORT}`));
 // ═══════════════════════════════════════════════════════════
 
 async function start() {
+  // Express health server is already listening — Render health checks will pass during startup wait
+
   console.log('🤖 BioPharma Telegram Bot starting (polling mode)...');
+
   try {
-    // Remove any existing webhook so polling works cleanly
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     console.log('✅ Webhook cleared');
   } catch (e) {
-    console.log('ℹ️ No webhook to clear:', e.message);
+    console.log('ℹ️ deleteWebhook:', e.message);
   }
-  await bot.launch({ allowedUpdates: ['message', 'callback_query'], dropPendingUpdates: true });
-  console.log('✅ Bot is live! Polling Telegram...');
+
+  // Retry loop — handles 409 from Render rolling deploy overlap
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      if (attempt > 1) {
+        console.log(`⏳ Waiting 35s for previous connection to expire... (attempt ${attempt}/6)`);
+        await new Promise(r => setTimeout(r, 35000));
+      }
+      await bot.launch({
+        allowedUpdates: ['message', 'callback_query'],
+        dropPendingUpdates: true,
+      });
+      console.log('✅ Bot is live! Polling Telegram...');
+      return;
+    } catch (err) {
+      console.error(`⚠️ Attempt ${attempt}/6: ${err.message}`);
+      if (attempt === 6) throw err;
+    }
+  }
 }
 
 start().catch(err => { console.error('❌ Bot launch failed:', err.message); process.exit(1); });
