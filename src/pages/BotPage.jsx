@@ -183,7 +183,7 @@ function ChatMessage({ msg }) {
 
   return (
     <div className={`flex gap-2 w-full ${isUser ? 'flex-row-reverse' : ''} animate-fade-in`}>
-      {/* Avatar */}
+      {/* Avatar — fixed 32px, never shrinks */}
       <div className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center"
         style={isUser ? {
           background: 'linear-gradient(135deg, #3b82f6, #06b6d4)',
@@ -194,23 +194,25 @@ function ChatMessage({ msg }) {
         {isUser ? <User size={14} className="text-white" /> : <Bot size={14} className="text-blue-400" />}
       </div>
 
-      {/* Bubble wrapper — constrained width, flex-shrink so it never overflows row */}
-      <div className={`flex flex-col gap-1.5 min-w-0 flex-shrink`}
-        style={{ maxWidth: isUser ? 'min(75%, calc(100vw - 60px))' : 'min(85%, calc(100vw - 60px))' }}>
-        {/* Bubble — w-full forces it to respect wrapper max-width */}
+      {/* Wrapper — flex-1 takes all remaining width after avatar+gap, min-w-0 prevents overflow */}
+      <div className={`flex-1 min-w-0 flex flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}>
+
+        {/* Bubble — maxWidth % of wrapper (flex-1 space), overflow-x for wide tables */}
         <div
-          className={`w-full px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+          className={`px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
           style={isUser ? {
+            maxWidth: '85%',
             background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
             color: 'white',
             fontSize: '0.875rem',
             lineHeight: '1.65',
             wordBreak: 'break-word',
           } : {
-            background: 'var(--card-bg)',
-            border: '1px solid var(--border-clr)',
+            maxWidth: '100%',
             overflowX: 'auto',
             WebkitOverflowScrolling: 'touch',
+            background: 'var(--card-bg)',
+            border: '1px solid var(--border-clr)',
           }}
         >
           {isUser ? (
