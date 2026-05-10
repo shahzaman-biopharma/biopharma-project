@@ -7,7 +7,7 @@ import { fetchGoogleSheetData } from '../services/excel';
 import {
   ArrowLeft, Send, Bot, User, Loader2,
   Database, RefreshCw, Sparkles,
-  FileSpreadsheet, FileDown, Table2,
+  FileSpreadsheet, FileDown, Table2, BrainCircuit,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
@@ -253,6 +253,19 @@ function ChatMessage({ msg }) {
   );
 }
 
+// ─── Conversation memory window ──────────────────────────────────────────────
+// Keep last N messages for API context (saves cost, keeps context sharp)
+const MEMORY_WINDOW = 10;
+
+function buildApiMessages(allMessages) {
+  const filtered = allMessages.filter(m => m.role !== 'system');
+  // Always keep at least the welcome message so bot knows the context
+  const window = filtered.length > MEMORY_WINDOW
+    ? [filtered[0], ...filtered.slice(-(MEMORY_WINDOW - 1))]
+    : filtered;
+  return window.map(m => ({ role: m.role, content: m.content }));
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function BotPage() {
@@ -342,10 +355,7 @@ export default function BotPage() {
     setLoading(true);
 
     try {
-      const apiMessages = newMessages
-        .filter(m => m.role !== 'system')
-        .map(m => ({ role: m.role, content: m.content }));
-
+      const apiMessages = buildApiMessages(newMessages);
       const wantsFile = isFileRequest(userMsg);
 
       if (wantsFile) {
@@ -458,6 +468,10 @@ export default function BotPage() {
           </div>
         </div>
 
+        <div className="bp-header-badge" title="Bot remembers the last 10 messages in this conversation">
+          <BrainCircuit size={11} color="#a78bfa" />
+          <span className="bp-memory-label">Mem ×10</span>
+        </div>
         <div className="bp-header-badge">
           <FileSpreadsheet size={11} color="#60a5fa" />
           PDF / Excel
@@ -471,7 +485,16 @@ export default function BotPage() {
       {/* ── Messages ── */}
       <div className="bp-messages">
         {messages.map((msg, i) => (
-          <ChatMessage key={i} msg={msg} />
+          <div key={i}>
+            {/* Show memory boundary marker when sliding window begins */}
+            {i === messages.length - MEMORY_WINDOW && messages.length > MEMORY_WINDOW + 1 && (
+              <div className="bp-memory-divider">
+                <BrainCircuit size={11} />
+                <span>Bot remembers from here (last {MEMORY_WINDOW} messages)</span>
+              </div>
+            )}
+            <ChatMessage msg={msg} />
+          </div>
         ))}
 
         {loading && (

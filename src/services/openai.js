@@ -18,10 +18,21 @@ FORMATTING RULES (always follow):
 - Respond in the same language the user writes in (Urdu or English)
 `;
 
+const MEMORY_INSTRUCTIONS = `
+CONVERSATION MEMORY (critical — always follow):
+- You have the recent conversation history available to you
+- When user says "jo tumne diya", "woh data", "pehle wali list", "us mein se", "same data mein", "that data", "the list you gave" — they mean something from YOUR previous message in this conversation
+- Find that previous response in history and use it as the base for your answer
+- If user asks to remove/add/modify something from previously given data → apply the change and return the complete updated result with clear indication of what changed
+- If user asks a follow-up without providing new data → use conversation history, never ask the user to repeat information already shared in this session
+- Never say "please provide the data again" if it was already given in this conversation
+`;
+
 export async function chatWithBot({ systemPrompt, messages, dataContext = '' }) {
   const systemContent = [
     systemPrompt,
     FORMAT_INSTRUCTIONS,
+    MEMORY_INSTRUCTIONS,
     dataContext ? `--- DATA CONTEXT ---\n${dataContext}` : '',
   ].filter(Boolean).join('\n\n');
 

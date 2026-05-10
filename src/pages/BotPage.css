@@ -84,6 +84,31 @@
   color: var(--text-secondary);
   flex-shrink: 0;
 }
+.bp-memory-label {
+  display: none;
+}
+@media (min-width: 480px) {
+  .bp-memory-label { display: inline; }
+}
+
+/* ── Memory boundary divider ─────────────────────────────── */
+.bp-memory-divider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  margin: 4px auto;
+  border-radius: 20px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #7c3aed;
+  background: rgba(124,58,237,0.08);
+  border: 1px solid rgba(124,58,237,0.18);
+  width: fit-content;
+  max-width: 90%;
+  text-align: center;
+  user-select: none;
+}
 
 /* ── Messages area ───────────────────────────────────────── */
 .bp-messages {
