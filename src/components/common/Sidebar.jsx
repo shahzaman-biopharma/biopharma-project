@@ -1,9 +1,11 @@
+import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { subscribeToNotifications } from '../../services/firestore';
 import {
   Dna, LayoutDashboard, FileText, Settings,
-  LogOut, ChevronRight, Shield, Sun, Moon, X,
+  LogOut, ChevronRight, Shield, Sun, Moon, X, Bell,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -20,6 +22,19 @@ export default function Sidebar({ onClose }) {
   const { userProfile, logout, isSuperAdmin, isAdmin } = useAuth();
   const { isDark, toggle } = useTheme();
   const navigate = useNavigate();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!userProfile?.uid) return;
+    const unsub = subscribeToNotifications(userProfile.uid, isAdmin, (notifs) => {
+      setUnreadCount(notifs.filter(n =>
+        n.recipientId === 'admins'
+          ? !(n.readBy || []).includes(userProfile.uid)
+          : !n.read
+      ).length);
+    });
+    return unsub;
+  }, [userProfile?.uid, isAdmin]);
 
   const handleLogout = async () => {
     await logout();
@@ -105,6 +120,35 @@ export default function Sidebar({ onClose }) {
             )}
           </NavLink>
         ))}
+
+        {/* Notifications — below Reports, visible to all logged-in users */}
+        <NavLink
+          to="/notifications"
+          onClick={handleNav}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group"
+          style={({ isActive }) => isActive ? {
+            color: 'white',
+            background: 'linear-gradient(135deg, rgba(59,130,246,0.2), rgba(6,182,212,0.1))',
+            border: '1px solid rgba(59,130,246,0.3)',
+          } : { color: 'var(--text-secondary)' }}
+        >
+          {({ isActive }) => (
+            <>
+              <Bell size={17} className={isActive ? 'text-blue-400' : 'text-slate-500 group-hover:text-blue-400'} />
+              Notifications
+              {unreadCount > 0 && !isActive ? (
+                <span
+                  className="ml-auto flex-shrink-0 min-w-[18px] h-[18px] flex items-center justify-center rounded-full text-[10px] font-bold"
+                  style={{ background: '#ef4444', color: 'white' }}
+                >
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              ) : isActive ? (
+                <ChevronRight size={13} className="ml-auto text-blue-400" />
+              ) : null}
+            </>
+          )}
+        </NavLink>
 
         {isAdmin && (
           <>

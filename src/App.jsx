@@ -8,6 +8,7 @@ import SignupPage from './pages/SignupPage';
 import DashboardPage from './pages/DashboardPage';
 import BotPage from './pages/BotPage';
 import ReportsPage from './pages/ReportsPage';
+import NotificationsPage from './pages/NotificationsPage';
 import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
@@ -36,6 +37,7 @@ export default function App() {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/bot/:deptId" element={<BotPage />} />
               <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

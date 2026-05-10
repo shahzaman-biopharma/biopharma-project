@@ -5,6 +5,7 @@ import {
   getAllDepartments, createDepartment, updateDepartment, deleteDepartment,
   getAllUsers, updateUserProfile, deleteUser,
   getReportSettings, saveReportSettings,
+  createNotification,
 } from '../services/firestore';
 import { generateDepartmentPrompt } from '../services/openai';
 import {
@@ -397,6 +398,16 @@ export default function SettingsPage() {
           const current = u?.assignedDepartments || [];
           if (!current.includes(editingDept.id)) {
             await updateUserProfile(uid, { assignedDepartments: [...current, editingDept.id] });
+            createNotification({
+              type: 'department_assigned',
+              title: 'Department Assigned',
+              message: `You have been assigned to the "${form.name}" department.`,
+              recipientId: uid,
+              triggeredBy: userProfile?.uid,
+              triggeredByName: userProfile?.displayName || userProfile?.email,
+              departmentId: editingDept.id,
+              departmentName: form.name,
+            }).catch(console.error);
           }
         }
       }
@@ -415,7 +426,27 @@ export default function SettingsPage() {
         const u = users.find(u => u.id === uid);
         const current = u?.assignedDepartments || [];
         await updateUserProfile(uid, { assignedDepartments: [...current, ref.id] });
+        createNotification({
+          type: 'department_assigned',
+          title: 'Department Assigned',
+          message: `You have been assigned to the "${form.name}" department.`,
+          recipientId: uid,
+          triggeredBy: userProfile?.uid,
+          triggeredByName: userProfile?.displayName || userProfile?.email,
+          departmentId: ref.id,
+          departmentName: form.name,
+        }).catch(console.error);
       }
+      createNotification({
+        type: 'department_created',
+        title: 'New Department Created',
+        message: `"${form.name}" department has been added to the platform.`,
+        recipientId: 'admins',
+        triggeredBy: userProfile?.uid,
+        triggeredByName: userProfile?.displayName || userProfile?.email,
+        departmentId: ref.id,
+        departmentName: form.name,
+      }).catch(console.error);
     }
     const depts = await getAllDepartments();
     setDepartments(depts);
@@ -493,6 +524,14 @@ export default function SettingsPage() {
         _password: password,
       };
       await createUserProfile(uid, newProfile);
+      createNotification({
+        type: 'new_user',
+        title: 'New User Created',
+        message: `${name} (${email}) has been added as ${role}.`,
+        recipientId: 'admins',
+        triggeredBy: userProfile?.uid,
+        triggeredByName: userProfile?.displayName || userProfile?.email,
+      }).catch(console.error);
 
       setUsers(p => [...p, { id: uid, ...newProfile }]);
       setShowCreateUser(false);

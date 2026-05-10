@@ -1,7 +1,7 @@
 import {
   collection, doc, setDoc, getDoc, getDocs, addDoc,
   updateDoc, deleteDoc, query, where, orderBy, limit,
-  serverTimestamp, onSnapshot,
+  serverTimestamp, onSnapshot, writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -159,4 +159,64 @@ export async function getReportSettings() {
 
 export async function saveReportSettings(data) {
   await setDoc(doc(db, 'settings', 'reports'), data, { merge: true });
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+// recipientId: userId for personal | 'admins' for broadcast to all admins/superadmins
+
+export async function createNotification({ type, title, message, recipientId, triggeredBy, triggeredByName, departmentId, departmentName }) {
+  return await addDoc(collection(db, 'notifications'), {
+    type,
+    title,
+    message,
+    recipientId,
+    read: false,
+    readBy: [],
+    triggeredBy: triggeredBy || null,
+    triggeredByName: triggeredByName || null,
+    departmentId: departmentId || null,
+    departmentName: departmentName || null,
+    createdAt: serverTimestamp(),
+  });
+}
+
+export function subscribeToNotifications(userId, isAdmin, callback) {
+  const recipientIds = isAdmin ? [userId, 'admins'] : [userId];
+  const q = query(
+    collection(db, 'notifications'),
+    where('recipientId', 'in', recipientIds),
+    orderBy('createdAt', 'desc'),
+    limit(50)
+  );
+  return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+}
+
+export async function markNotificationRead(notifId, userId) {
+  const ref = doc(db, 'notifications', notifId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const data = snap.data();
+  if (data.recipientId === 'admins') {
+    const readBy = data.readBy || [];
+    if (!readBy.includes(userId)) await updateDoc(ref, { readBy: [...readBy, userId] });
+  } else {
+    await updateDoc(ref, { read: true });
+  }
+}
+
+export async function markAllNotificationsRead(userId, isAdmin) {
+  const recipientIds = isAdmin ? [userId, 'admins'] : [userId];
+  const q = query(collection(db, 'notifications'), where('recipientId', 'in', recipientIds));
+  const snap = await getDocs(q);
+  const batch = writeBatch(db);
+  snap.docs.forEach(d => {
+    const data = d.data();
+    if (data.recipientId === 'admins') {
+      const readBy = data.readBy || [];
+      if (!readBy.includes(userId)) batch.update(d.ref, { readBy: [...readBy, userId] });
+    } else if (!data.read) {
+      batch.update(d.ref, { read: true });
+    }
+  });
+  await batch.commit();
 }
