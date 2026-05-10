@@ -1,7 +1,9 @@
 'use strict';
 
 const { Telegraf } = require('telegraf');
-const express = require('express');
+const express      = require('express');
+const PDFDocument  = require('pdfkit');
+const ExcelJS      = require('exceljs');
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
@@ -242,7 +244,6 @@ async function generateReportContent(dept, type, period) {
 }
 
 async function makePDF(deptName, title, content, period) {
-  const PDFDocument = require('pdfkit');
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 55, size: 'A4', bufferPages: true,
       info: { Title: `${deptName} - ${title}`, Author: 'BioPharma CRA Bot' } });
@@ -301,7 +302,6 @@ async function makePDF(deptName, title, content, period) {
 }
 
 async function makeExcel(deptName, title, content, period) {
-  const ExcelJS = require('exceljs');
   const wb = new ExcelJS.Workbook();
   wb.creator = 'BioPharma CRA Bot';
   wb.created = new Date();
@@ -309,7 +309,7 @@ async function makeExcel(deptName, title, content, period) {
   ws.columns = [{ width: 4 }, { width: 68 }];
 
   const addMerged = (text, rowStyle) => {
-    const row = ws.addRow(['', text]);
+    const row = ws.addRow([text, '']);
     ws.mergeCells(`A${row.number}:B${row.number}`);
     if (rowStyle) Object.assign(row.getCell(1), rowStyle);
     return row;
@@ -338,7 +338,7 @@ async function makeExcel(deptName, title, content, period) {
     if (/^##?\s/.test(line)) {
       const text = line.replace(/^##?\s+/, '');
       ws.addRow([]);
-      const row = ws.addRow(['', text]);
+      const row = ws.addRow([text, '']);
       ws.mergeCells(`A${row.number}:B${row.number}`);
       row.getCell(1).font = { name: 'Calibri', bold: true, size: 12, color: { argb: '1e3a5f' } };
       row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'e8f0fe' } };
@@ -348,7 +348,7 @@ async function makeExcel(deptName, title, content, period) {
       row.getCell(1).alignment = { horizontal: 'center' };
       row.getCell(2).font = { name: 'Calibri', size: 10 };
     } else {
-      const row = ws.addRow(['', line]);
+      const row = ws.addRow([line, '']);
       ws.mergeCells(`A${row.number}:B${row.number}`);
       row.getCell(1).font = { name: 'Calibri', size: 10 };
       row.getCell(1).alignment = { wrapText: true };
@@ -543,28 +543,36 @@ bot.action(/^report:(pdf|excel)$/, async (ctx) => {
 
   await ctx.reply('⏳ Generating your report — this may take 20–30 seconds...');
 
+  const now    = new Date();
+  const period = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const title  = 'On-Demand Report';
+
+  // Step 1: AI content generation
+  let content;
   try {
-    const now    = new Date();
-    const period = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-    const title  = 'On-Demand Report';
+    content = await generateReportContent(dept, 'on-demand', period);
+  } catch (err) {
+    console.error('Report AI error:', err.message);
+    return ctx.reply('❌ AI report generation failed. Please try again later.');
+  }
 
-    const content = await generateReportContent(dept, 'on-demand', period);
+  // Step 2: Save to Firestore (fire-and-forget — don't delay file delivery)
+  fsAdd('reports', {
+    departmentId: sess.currentDeptId,
+    departmentName: dept.name,
+    type: 'on-demand',
+    content,
+    period,
+    generatedBy: sess.uid,
+    generatedAt: now.toISOString(),
+    source: 'telegram',
+  }).catch(e => console.warn('Firestore report save skipped:', e.message));
 
-    // Save to Firestore
-    await fsAdd('reports', {
-      departmentId: sess.currentDeptId,
-      departmentName: dept.name,
-      type: 'on-demand',
-      content,
-      period,
-      generatedBy: sess.uid,
-      generatedAt: now.toISOString(),
-      source: 'telegram',
-    });
+  // Step 3: Build file and send
+  const dateStr  = now.toISOString().slice(0, 10);
+  const safeName = dept.name.replace(/[^a-zA-Z0-9]/g, '_');
 
-    const dateStr = now.toISOString().slice(0, 10);
-    const safeName = dept.name.replace(/[^a-zA-Z0-9]/g, '_');
-
+  try {
     if (format === 'pdf') {
       const buf = await makePDF(dept.name, title, content, period);
       await ctx.replyWithDocument(
@@ -578,10 +586,9 @@ bot.action(/^report:(pdf|excel)$/, async (ctx) => {
         { caption: `📊 <b>${dept.name}</b> — ${period}`, parse_mode: 'HTML' }
       );
     }
-
   } catch (err) {
-    console.error('Report generation error:', err.message);
-    await ctx.reply('❌ Failed to generate report. Please try again later.');
+    console.error(`Report ${format} file error:`, err.message, err.stack);
+    await ctx.reply(`❌ Failed to create ${format.toUpperCase()} file. Please try again.`);
   }
 });
 
