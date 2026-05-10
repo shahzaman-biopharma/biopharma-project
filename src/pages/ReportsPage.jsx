@@ -4,26 +4,255 @@ import { subscribeToReports, saveReport, getAllDepartments, getReportSettings } 
 import { generateReport } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
-  FileText, Plus, Loader2, Download, Calendar,
-  Clock, Bot, ChevronDown, ChevronUp, Sparkles,
+  FileText, Plus, Loader2, Calendar,
+  Clock, ChevronDown, ChevronUp, Sparkles, FileDown,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+// ─── Status colours for table cells ──────────────────────────────────────────
+
+const STATUS_CLASSES = {
+  verified: 'bot-td-green', resolved: 'bot-td-green', complete: 'bot-td-green',
+  pass: 'bot-td-green', passed: 'bot-td-green', yes: 'bot-td-green', active: 'bot-td-green',
+  pending: 'bot-td-red', open: 'bot-td-red', failed: 'bot-td-red',
+  critical: 'bot-td-red', missing: 'bot-td-red', no: 'bot-td-red', overdue: 'bot-td-red',
+  'n/a': 'bot-td-yellow', partial: 'bot-td-yellow', review: 'bot-td-yellow',
+  'in progress': 'bot-td-yellow',
+};
+
+function tdCls(children) {
+  const t = Array.isArray(children)
+    ? children.filter(c => typeof c === 'string').join('').trim().toLowerCase()
+    : typeof children === 'string' ? children.trim().toLowerCase() : '';
+  return STATUS_CLASSES[t] || '';
+}
+
+// ─── Strip markdown bold/italic for PDF text ─────────────────────────────────
+
+const strip = (s) => String(s)
+  .replace(/\*\*(.*?)\*\*/g, '$1')
+  .replace(/\*(.*?)\*/g, '$1')
+  .replace(/`(.*?)`/g, '$1');
+
+// ─── PDF generator ────────────────────────────────────────────────────────────
+
+function downloadReportPDF(report, date) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const PW = doc.internal.pageSize.getWidth();
+  const PH = doc.internal.pageSize.getHeight();
+  const M = 14;
+  const CW = PW - M * 2;
+
+  // ── Decorative header ──────────────────────────────────────────────────────
+  doc.setFillColor(7, 94, 84);
+  doc.rect(0, 0, PW, 46, 'F');
+
+  // Accent stripe
+  doc.setFillColor(4, 65, 58);
+  doc.rect(0, 40, PW, 6, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text(report.departmentName, PW / 2, 16, { align: 'center' });
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(180, 222, 216);
+  const typeLabel = report.type === 'monthly' ? 'MONTHLY REPORT' : 'WEEKLY REPORT';
+  doc.text(typeLabel, PW / 2, 26, { align: 'center' });
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(160, 210, 204);
+  doc.text(`Generated: ${format(date, 'MMMM dd, yyyy  •  HH:mm')}`, PW / 2, 34, { align: 'center' });
+  doc.text('BioPharma CRA Platform  •  Confidential', PW / 2, 41, { align: 'center' });
+
+  let y = 56;
+
+  // ── Page helpers ───────────────────────────────────────────────────────────
+  const newPage = () => {
+    doc.addPage();
+    doc.setFillColor(7, 94, 84);
+    doc.rect(0, 0, PW, 7, 'F');
+    y = 16;
+  };
+  const need = (n) => { if (y + n > PH - 18) newPage(); };
+
+  // ── Table renderer ─────────────────────────────────────────────────────────
+  const flushTable = (buf) => {
+    if (!buf.length) return;
+    // Filter separator rows (only contains |, -, :, space)
+    const parsed = buf
+      .filter(l => !/^[\|\ \-:]+$/.test(l.trim()))
+      .map(l =>
+        l.split('|')
+          .slice(1, -1)
+          .map(c => strip(c.trim()))
+      );
+    if (parsed.length < 2) return;
+
+    need(35);
+    autoTable(doc, {
+      head: [parsed[0]],
+      body: parsed.slice(1),
+      startY: y,
+      margin: { left: M, right: M },
+      styles: {
+        fontSize: 8.5,
+        cellPadding: 3.5,
+        lineColor: [207, 216, 220],
+        lineWidth: 0.3,
+        textColor: [30, 41, 59],
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: [7, 94, 84],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 9,
+      },
+      alternateRowStyles: { fillColor: [249, 251, 252] },
+      tableLineColor: [207, 216, 220],
+      tableLineWidth: 0.3,
+      didDrawPage: (data) => {
+        if (data.pageNumber > 1) {
+          doc.setFillColor(7, 94, 84);
+          doc.rect(0, 0, PW, 7, 'F');
+        }
+      },
+    });
+    y = doc.lastAutoTable.finalY + 9;
+  };
+
+  // ── Line-by-line markdown parser ───────────────────────────────────────────
+  const lines = (report.content || '').split('\n');
+  let tableBuf = [];
+  let inTable = false;
+
+  for (const line of lines) {
+    // Collect table rows
+    if (line.trim().startsWith('|')) {
+      tableBuf.push(line.trim());
+      inTable = true;
+      continue;
+    }
+    if (inTable) { flushTable(tableBuf); tableBuf = []; inTable = false; }
+
+    const raw = strip(line);
+
+    if (line.startsWith('## ')) {
+      need(16);
+      doc.setFontSize(12.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(7, 94, 84);
+      doc.text(strip(line.slice(3)), M, y);
+      doc.setDrawColor(7, 94, 84);
+      doc.setLineWidth(0.5);
+      doc.line(M, y + 2, M + CW, y + 2);
+      y += 10;
+
+    } else if (line.startsWith('### ')) {
+      need(10);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 64, 175);
+      doc.text(strip(line.slice(4)), M, y);
+      y += 7;
+
+    } else if (/^[-*] /.test(line)) {
+      need(7);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(30, 41, 59);
+      const wrapped = doc.splitTextToSize(`• ${strip(line.slice(2))}`, CW - 6);
+      wrapped.forEach((l, i) => {
+        need(5);
+        doc.text(l, M + (i === 0 ? 3 : 7), y);
+        y += 5;
+      });
+      y += 1;
+
+    } else if (/^\d+\. /.test(line)) {
+      need(7);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(30, 41, 59);
+      const wrapped = doc.splitTextToSize(raw.trim(), CW - 6);
+      wrapped.forEach(l => { need(5); doc.text(l, M + 3, y); y += 5; });
+      y += 1;
+
+    } else if (line.startsWith('>')) {
+      const text = strip(line.slice(1).trim());
+      const wrapped = doc.splitTextToSize(text, CW - 12);
+      const bh = wrapped.length * 5 + 6;
+      need(bh + 2);
+      doc.setFillColor(232, 248, 244);
+      doc.roundedRect(M, y - 3.5, CW, bh, 1.5, 1.5, 'F');
+      doc.setFillColor(7, 94, 84);
+      doc.rect(M, y - 3.5, 2.5, bh, 'F');
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'italic');
+      doc.setTextColor(71, 85, 105);
+      doc.text(wrapped, M + 6, y);
+      y += bh + 3;
+
+    } else if (/^---+$/.test(line.trim())) {
+      need(5);
+      doc.setDrawColor(203, 213, 225);
+      doc.setLineWidth(0.3);
+      doc.line(M, y, M + CW, y);
+      y += 5;
+
+    } else if (raw.trim()) {
+      need(7);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(30, 41, 59);
+      const wrapped = doc.splitTextToSize(raw.trim(), CW);
+      wrapped.forEach(l => { need(5); doc.text(l, M, y); y += 5; });
+      y += 2;
+
+    } else {
+      y += 2.5; // blank line spacing
+    }
+  }
+  if (inTable) flushTable(tableBuf);
+
+  // ── Footer on every page ───────────────────────────────────────────────────
+  const total = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text('BioPharma CRA Platform — Confidential', M, PH - 7);
+    doc.text(`Page ${i} of ${total}`, PW - M, PH - 7, { align: 'right' });
+  }
+
+  doc.save(`${report.departmentName}_${report.type}_${format(date, 'yyyy-MM-dd')}.pdf`);
+}
+
+// ─── Report card ──────────────────────────────────────────────────────────────
 
 function ReportCard({ report }) {
   const [expanded, setExpanded] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const date = report.generatedAt?.toDate?.() || new Date(report.generatedAt || Date.now());
 
-  const downloadTxt = () => {
-    const blob = new Blob([report.content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${report.departmentName}_${report.type}_${format(date, 'yyyy-MM-dd')}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handlePDF = async () => {
+    setPdfLoading(true);
+    try {
+      downloadReportPDF(report, date);
+      toast.success('PDF downloaded!');
+    } catch {
+      toast.error('Failed to generate PDF');
+    } finally {
+      setPdfLoading(false);
+    }
   };
 
   const typeColor = report.type === 'monthly' ? '#8b5cf6' : '#3b82f6';
@@ -59,14 +288,21 @@ function ReportCard({ report }) {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* PDF download */}
             <button
-              onClick={downloadTxt}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-blue-400 transition-colors"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
-              title="Download report"
+              onClick={handlePDF}
+              disabled={pdfLoading}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+              style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171' }}
+              title="Download PDF"
             >
-              <Download size={14} />
+              {pdfLoading
+                ? <Loader2 size={11} className="animate-spin" />
+                : <FileDown size={11} />}
+              <span className="hidden sm:inline">PDF</span>
             </button>
+
+            {/* Expand/collapse */}
             <button
               onClick={() => setExpanded(!expanded)}
               className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white transition-colors"
@@ -77,7 +313,7 @@ function ReportCard({ report }) {
           </div>
         </div>
 
-        {/* Preview */}
+        {/* Preview snippet */}
         <p className="text-slate-400 text-xs leading-relaxed line-clamp-2">
           {report.content?.substring(0, 150)}...
         </p>
@@ -87,15 +323,21 @@ function ReportCard({ report }) {
       {expanded && (
         <div className="border-t px-5 pb-5 pt-4" style={{ borderColor: 'rgba(59,130,246,0.1)' }}>
           <div className="rounded-xl p-4"
-            style={{ background: 'rgba(0,0,0,0.25)', maxHeight: '500px', overflowY: 'auto' }}>
+            style={{ background: 'rgba(0,0,0,0.25)', maxHeight: '600px', overflowY: 'auto' }}>
             <ReactMarkdown
               className="bot-markdown"
               remarkPlugins={[remarkGfm]}
               components={{
                 table: ({ children }) => (
-                  <div className="bot-table-wrap">
-                    <table>{children}</table>
-                  </div>
+                  <>
+                    <div className="bot-table-wrap">
+                      <table>{children}</table>
+                    </div>
+                    <p className="bot-scroll-hint">← swipe to see more →</p>
+                  </>
+                ),
+                td: ({ children }) => (
+                  <td className={tdCls(children) || undefined}>{children}</td>
                 ),
               }}
             >
@@ -108,8 +350,10 @@ function ReportCard({ report }) {
   );
 }
 
+// ─── Main page ────────────────────────────────────────────────────────────────
+
 export default function ReportsPage() {
-  const { isAdmin, isSuperAdmin, user, userProfile } = useAuth();
+  const { isAdmin, isSuperAdmin, user } = useAuth();
   const [reports, setReports] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [generating, setGenerating] = useState(false);
@@ -128,7 +372,7 @@ export default function ReportsPage() {
   const canViewReport = (report) => {
     if (isSuperAdmin) return true;
     const access = accessSettings[report.departmentId];
-    if (!access) return isAdmin; // default: admins only
+    if (!access) return isAdmin;
     if (isAdmin && access.allowAdmins !== false) return true;
     if ((access.allowedUsers || []).includes(user?.uid)) return true;
     return false;
@@ -143,7 +387,6 @@ export default function ReportsPage() {
 
       let dataCtx = `Department: ${dept.name}\nDescription: ${dept.description}\n`;
 
-      // Load data sources
       for (const src of dept.dataSources || []) {
         try {
           if (src.type === 'googlesheet' && src.url) {
@@ -243,7 +486,9 @@ export default function ReportsPage() {
               disabled={generating || !selectedDept}
               className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white gradient-btn disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {generating ? <><Loader2 size={15} className="animate-spin" /> Generating...</> : <><Plus size={15} /> Generate</>}
+              {generating
+                ? <><Loader2 size={15} className="animate-spin" /> Generating...</>
+                : <><Plus size={15} /> Generate</>}
             </button>
           </div>
         </div>
