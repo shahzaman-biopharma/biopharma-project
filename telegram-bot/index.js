@@ -1,21 +1,22 @@
 'use strict';
 
-const { Telegraf, session, Markup } = require('telegraf');
+const { Telegraf, session } = require('telegraf');
 const express = require('express');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const BOT_TOKEN   = process.env.TELEGRAM_BOT_TOKEN;
 const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;
 const PROJECT_ID  = process.env.FIREBASE_PROJECT_ID || 'biopharma-a07e0';
 const OPENAI_KEY  = process.env.OPENAI_API_KEY;
 const PORT        = process.env.PORT || 3000;
 
-if (!BOT_TOKEN)   { console.error('❌ TELEGRAM_BOT_TOKEN missing'); process.exit(1); }
 if (!WEB_API_KEY) { console.error('❌ FIREBASE_WEB_API_KEY missing'); process.exit(1); }
 if (!OPENAI_KEY)  { console.error('❌ OPENAI_API_KEY missing'); process.exit(1); }
 
 const FS  = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 const KEY = `?key=${WEB_API_KEY}`;
+
+// Active bots: deptId → { bot, token }
+const activeBots = new Map();
 
 // ═══════════════════════════════════════════════════════════
 //  Firestore REST helpers
@@ -70,12 +71,12 @@ async function fsPatch(path, data) {
 async function fsDelete(path) {
   await fetch(`${FS}/${path}${KEY}`, { method: 'DELETE' });
 }
-async function fsCollection(collectionId) {
+async function fsCollection(col) {
   try {
-    const r = await fetch(`${FS}/${collectionId}${KEY}`);
+    const r = await fetch(`${FS}/${col}${KEY}`);
     if (!r.ok) return [];
-    const data = await r.json();
-    return (data.documents || []).map(doc => ({
+    const d = await r.json();
+    return (d.documents || []).map(doc => ({
       id: doc.name.split('/').pop(),
       ...fromFields(doc.fields),
     }));
@@ -101,15 +102,14 @@ async function signIn(email, password) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  App data helpers
+//  Data helpers
 // ═══════════════════════════════════════════════════════════
 
-const getTgSession   = (tid)        => fsGet(`telegramSessions/${tid}`);
-const saveTgSession  = (tid, data)  => fsPatch(`telegramSessions/${tid}`, data);
-const deleteTgSession= (tid)        => fsDelete(`telegramSessions/${tid}`);
-const getUserProfile = (uid)        => fsGet(`users/${uid}`);
-const getDepartments = ()           => fsCollection('departments');
-const getDepartment  = (id)         => fsGet(`departments/${id}`);
+const getDepartments  = ()          => fsCollection('departments');
+const getUserProfile  = (uid)       => fsGet(`users/${uid}`);
+const getTgSession    = (tid, deptId) => fsGet(`telegramSessions/${tid}_${deptId}`);
+const saveTgSession   = (tid, deptId, data) => fsPatch(`telegramSessions/${tid}_${deptId}`, data);
+const deleteTgSession = (tid, deptId) => fsDelete(`telegramSessions/${tid}_${deptId}`);
 
 async function getChatHistory(uid, deptId) {
   const doc = await fsGet(`chats/${uid}_${deptId}`);
@@ -123,8 +123,29 @@ async function saveChatHistory(uid, deptId, messages) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  OpenAI
+//  OpenAI — Telegram-optimized formatting
 // ═══════════════════════════════════════════════════════════
+
+const TELEGRAM_FORMAT = `
+
+TELEGRAM FORMATTING RULES (hamesha follow karein):
+
+1. KABHI markdown table mat banao (| col | col | format BANNED hai)
+2. Data ko bullet card format mein do:
+
+<b>📋 Record / Site Name</b>
+• Field 1: Value
+• Field 2: Value
+• Status: ✅ Verified
+─────────────────
+
+3. Section headings ke liye: <b>🔹 Heading</b>
+4. Bold: <b>important numbers aur terms</b>
+5. Status emojis: ✅ complete/verified  ❌ failed/missing  ⚠️ pending/review
+6. Agar zyada records hain, top 5-7 dikhao phir summary do
+7. Mobile screen ke liye format karo — short aur clear
+8. User ki language mein jawab do (Urdu ya English)
+`;
 
 async function gptReply(dept, history, userText) {
   let ctx = `Department: ${dept.name}\nDescription: ${dept.description || ''}\n`;
@@ -142,35 +163,12 @@ async function gptReply(dept, history, userText) {
       } else if (src.type === 'text' && src.content) {
         ctx += `\n--- ${src.name} ---\n${src.content}\n`;
       }
-    } catch { /* skip failed source */ }
+    } catch { /* skip */ }
   }
 
-  const FORMAT = `
-
-TELEGRAM FORMATTING RULES (hamesha follow karein):
-- Bold ke liye: <b>text</b> (important terms, numbers, key findings)
-- Italic ke liye: <i>text</i>
-- Code/value ke liye: <code>text</code>
-- Bullet points ke liye • use karein (dash nahi)
-- Section headings ke liye: <b>━━ HEADING ━━</b>
-- Tables/comparisons ke liye <pre> block:
-
-<pre>Metric          Value      Status
-────────────────────────────────
-Item 1          100        ✅
-Item 2          50         ⚠️
-Item 3          0          ❌</pre>
-
-- ✅ = complete/verified/good
-- ❌ = missing/failed/critical
-- ⚠️ = pending/review/partial
-- Jawab mukhtasar aur clear rakho — yeh chat hai, report nahi
-- User ki language mein jawab do (Urdu ya English)
-`;
-
   const systemPrompt = dept.systemPrompt
-    ? `${dept.systemPrompt}\n\n--- DATA ---\n${ctx}${FORMAT}`
-    : `Aap ${dept.name} department ke AI assistant hain. Professional aur mukhtasar jawab dein.\n\n--- DATA ---\n${ctx}${FORMAT}`;
+    ? `${dept.systemPrompt}\n\n--- DATA ---\n${ctx}${TELEGRAM_FORMAT}`
+    : `Aap ${dept.name} department ke AI assistant hain. Professional aur mukhtasar jawab dein.\n\n--- DATA ---\n${ctx}${TELEGRAM_FORMAT}`;
 
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -183,7 +181,7 @@ Item 3          0          ❌</pre>
         { role: 'user', content: userText },
       ],
       temperature: 0.7,
-      max_tokens: 1000,
+      max_tokens: 1200,
     }),
   });
   const d = await r.json();
@@ -191,7 +189,7 @@ Item 3          0          ❌</pre>
 }
 
 // ═══════════════════════════════════════════════════════════
-//  Helpers
+//  Send helper — HTML mode with plain-text fallback
 // ═══════════════════════════════════════════════════════════
 
 async function safeSend(ctx, text) {
@@ -202,331 +200,243 @@ async function safeSend(ctx, text) {
     try {
       await ctx.reply(chunk, { parse_mode: 'HTML' });
     } catch {
-      // Fallback: strip HTML tags and send plain text
       await ctx.reply(chunk.replace(/<[^>]*>/g, ''));
     }
   }
 }
 
-function buildDeptKeyboard(depts) {
-  const btns = depts.map(d => Markup.button.callback(`🏢 ${d.name}`, `dept_${d.id}`));
-  const rows = [];
-  for (let i = 0; i < btns.length; i += 2) rows.push(btns.slice(i, i + 2));
-  return Markup.inlineKeyboard(rows);
-}
-
-function isAdmin(role) {
-  return role === 'admin' || role === 'superadmin';
-}
-
-async function getAccessibleDepts(sess) {
-  const all = await getDepartments();
-  if (isAdmin(sess.role)) return all;
-  // Regular user: only their assigned department
-  if (sess.departmentId) return all.filter(d => d.id === sess.departmentId);
-  return all; // fallback: show all if no department assigned
-}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ═══════════════════════════════════════════════════════════
-//  Telegraf Bot
+//  Bot handlers — one setup per department instance
 // ═══════════════════════════════════════════════════════════
 
-const bot = new Telegraf(BOT_TOKEN);
-bot.use(session());
+function setupHandlers(bot, dept) {
 
-// ── /start ────────────────────────────────────────────────
-bot.command('start', async (ctx) => {
-  const tid = String(ctx.from.id);
-  ctx.session = {};
+  // /start
+  bot.command('start', async (ctx) => {
+    const tid = String(ctx.from.id);
+    ctx.session = {};
 
-  const sess = await getTgSession(tid);
-
-  if (sess?.uid) {
-    // Already logged in
-    const depts = await getAccessibleDepts(sess);
-
-    if (depts.length === 0) {
+    const sess = await getTgSession(tid, dept.id);
+    if (sess?.uid) {
       return ctx.reply(
-        '❌ Koi department access nahi hai.\nAdmin se rabta karein.'
+        `✅ <b>Welcome back, ${sess.displayName || sess.email}!</b>\n\n` +
+        `🏢 <b>${dept.name}</b> bot se connected hain.\n\nKoi bhi sawal karein!`,
+        { parse_mode: 'HTML' }
       );
     }
 
-    if (depts.length === 1) {
-      await saveTgSession(tid, { ...sess, selectedDeptId: depts[0].id });
-      return ctx.reply(
-        `✅ *Welcome back, ${sess.displayName || sess.email}!*\n\n` +
-        `🏢 *${depts[0].name}* se connected hain.\n\nKoi bhi sawal karein!`,
-        { parse_mode: 'Markdown' }
-      );
-    }
-
-    return ctx.reply(
-      `✅ *Welcome back, ${sess.displayName || sess.email}!*\n\nKaun sa department?`,
-      { parse_mode: 'Markdown', ...buildDeptKeyboard(depts) }
+    ctx.session.step = 'email';
+    await ctx.reply(
+      `🤖 <b>${dept.name} Bot</b>\n\nBioPharma CRA Platform mein khush amdeed!\n\n` +
+      `📧 Apna <b>email</b> enter karein:`,
+      { parse_mode: 'HTML' }
     );
-  }
-
-  // Not logged in → start auth
-  ctx.session.step = 'email';
-  await ctx.reply(
-    '🤖 *BioPharma CRA Platform*\n\n' +
-    'AI Assistant mein khush amdeed!\n\n' +
-    '📧 Apna *email address* enter karein:',
-    { parse_mode: 'Markdown' }
-  );
-});
-
-// ── /logout ───────────────────────────────────────────────
-bot.command('logout', async (ctx) => {
-  const tid = String(ctx.from.id);
-  ctx.session = {};
-  await deleteTgSession(tid);
-  await ctx.reply('👋 *Logout ho gaye.*\n\n/start se dobara login karein.', {
-    parse_mode: 'Markdown',
   });
-});
 
-// ── /switch ───────────────────────────────────────────────
-bot.command('switch', async (ctx) => {
-  const tid = String(ctx.from.id);
-  const sess = await getTgSession(tid);
-
-  if (!sess?.uid) {
-    return ctx.reply('🔐 Pehle /start se login karein.');
-  }
-
-  const depts = await getAccessibleDepts(sess);
-
-  if (depts.length <= 1) {
-    return ctx.reply('ℹ️ Sirf ek department available hai.');
-  }
-
-  return ctx.reply('🔄 *Kaun sa department?*', {
-    parse_mode: 'Markdown',
-    ...buildDeptKeyboard(depts),
+  // /logout
+  bot.command('logout', async (ctx) => {
+    const tid = String(ctx.from.id);
+    ctx.session = {};
+    await deleteTgSession(tid, dept.id);
+    await ctx.reply('👋 <b>Logout ho gaye.</b>\n\n/start se dobara login karein.', {
+      parse_mode: 'HTML',
+    });
   });
-});
 
-// ── /help ─────────────────────────────────────────────────
-bot.command('help', async (ctx) => {
-  await ctx.reply(
-    '*BioPharma CRA Bot*\n\n' +
-    '/start  — Login ya Welcome\n' +
-    '/switch — Department change karein\n' +
-    '/logout — Logout\n' +
-    '/help   — Yeh message\n\n' +
-    'Login ke baad koi bhi sawal karein — data analysis, reports, aur zyada!',
-    { parse_mode: 'Markdown' }
-  );
-});
+  // /help
+  bot.command('help', async (ctx) => {
+    await ctx.reply(
+      `<b>${dept.name} Bot</b>\n\n` +
+      `/start  — Login\n/logout — Logout\n/help   — Help\n\n` +
+      `Login ke baad koi bhi sawal karein!`,
+      { parse_mode: 'HTML' }
+    );
+  });
 
-// ── Department selection callback ─────────────────────────
-bot.action(/^dept_(.+)$/, async (ctx) => {
-  const tid    = String(ctx.from.id);
-  const deptId = ctx.match[1];
+  // Text messages
+  bot.on('text', async (ctx) => {
+    const tid  = String(ctx.from.id);
+    const text = ctx.message.text.trim();
+    if (text.startsWith('/')) return;
 
-  const sess = await getTgSession(tid);
-  if (!sess?.uid) {
-    await ctx.answerCbQuery('Session khatam. /start karein.');
-    return ctx.reply('🔐 /start se login karein.');
-  }
-
-  const dept = await getDepartment(deptId);
-  if (!dept) {
-    await ctx.answerCbQuery('Department nahi mila!');
-    return;
-  }
-
-  await saveTgSession(tid, { ...sess, selectedDeptId: deptId });
-  await ctx.answerCbQuery(`${dept.name} ✅`);
-  await ctx.editMessageText(
-    `✅ *${dept.name}* bot se connected!\n\nAb koi bhi sawal karein. 🚀`,
-    { parse_mode: 'Markdown' }
-  );
-});
-
-// ── Main message handler ──────────────────────────────────
-bot.on('text', async (ctx) => {
-  const tid  = String(ctx.from.id);
-  const text = ctx.message.text.trim();
-
-  if (text.startsWith('/')) return; // commands handled above
-
-  // ─ Login flow: email step
-  if (ctx.session?.step === 'email') {
-    if (!text.includes('@')) {
-      return ctx.reply('❌ Valid email address enter karein.\n\n📧 *Email:*', {
-        parse_mode: 'Markdown',
-      });
+    // ─ Email step
+    if (ctx.session?.step === 'email') {
+      if (!text.includes('@')) {
+        return ctx.reply('❌ Valid email enter karein.\n\n📧 <b>Email:</b>', { parse_mode: 'HTML' });
+      }
+      ctx.session.email = text.toLowerCase().trim();
+      ctx.session.step  = 'password';
+      return ctx.reply('🔑 <b>Password</b> enter karein:', { parse_mode: 'HTML' });
     }
-    ctx.session.email = text.toLowerCase().trim();
-    ctx.session.step  = 'password';
-    return ctx.reply('🔑 *Password* enter karein:', { parse_mode: 'Markdown' });
-  }
 
-  // ─ Login flow: password step
-  if (ctx.session?.step === 'password') {
-    const loadingMsg = await ctx.reply('⏳ Verify ho raha hai...');
+    // ─ Password step
+    if (ctx.session?.step === 'password') {
+      await ctx.reply('⏳ Verify ho raha hai...');
+      try {
+        const authUser = await signIn(ctx.session.email, text);
+        const profile  = await getUserProfile(authUser.uid);
+        const role     = profile?.role || 'user';
+        const name     = authUser.displayName || profile?.displayName || authUser.email.split('@')[0];
+
+        // Access check
+        const hasAccess =
+          role === 'admin' || role === 'superadmin' ||
+          (profile?.assignedDepartments || []).includes(dept.id);
+
+        if (!hasAccess) {
+          ctx.session = {};
+          return ctx.reply(
+            `❌ <b>Access nahi hai.</b>\n\nAap <b>${dept.name}</b> department ke liye authorized nahi hain.\nAdmin se rabta karein.`,
+            { parse_mode: 'HTML' }
+          );
+        }
+
+        await saveTgSession(tid, dept.id, {
+          uid: authUser.uid, email: authUser.email,
+          displayName: name, role,
+          linkedAt: new Date().toISOString(),
+        });
+        ctx.session = {};
+
+        const adminBadge = (role === 'admin' || role === 'superadmin')
+          ? `\n🛡 Role: <b>${role}</b>` : '';
+
+        return ctx.reply(
+          `✅ <b>Login kamyaab!</b>\n\nWelcome <b>${name}!</b> 🎉${adminBadge}\n\n` +
+          `🏢 <b>${dept.name}</b> bot se connected!\n\nAb koi bhi sawal karein! 🚀`,
+          { parse_mode: 'HTML' }
+        );
+
+      } catch (err) {
+        ctx.session.step  = 'email';
+        ctx.session.email = undefined;
+        const errMsg =
+          err.message?.includes('INVALID') || err.message?.includes('EMAIL_NOT_FOUND')
+            ? '❌ <b>Email ya password galat hai.</b>'
+            : '❌ Login fail. Dobara try karein.';
+        return ctx.reply(`${errMsg}\n\n📧 <b>Email</b> enter karein:`, { parse_mode: 'HTML' });
+      }
+    }
+
+    // ─ Chat
+    const sess = await getTgSession(tid, dept.id);
+    if (!sess?.uid) {
+      ctx.session = { step: 'email' };
+      return ctx.reply('🔐 Pehle login karein.\n\n📧 <b>Email</b> enter karein:', { parse_mode: 'HTML' });
+    }
+
+    await ctx.replyWithChatAction('typing');
 
     try {
-      const authUser = await signIn(ctx.session.email, text);
-      const profile  = await getUserProfile(authUser.uid);
+      const history = await getChatHistory(sess.uid, dept.id);
+      const reply   = await gptReply(dept, history, text);
 
-      const role         = profile?.role        || 'user';
-      const displayName  = authUser.displayName || profile?.displayName || authUser.email.split('@')[0];
-      const departmentId = profile?.departmentId || null;
+      await saveChatHistory(sess.uid, dept.id, [
+        ...history,
+        { role: 'user',      content: text,  timestamp: Date.now(), source: 'telegram' },
+        { role: 'assistant', content: reply, timestamp: Date.now(), source: 'telegram' },
+      ]);
 
-      const sessionData = {
-        uid: authUser.uid, email: authUser.email,
-        displayName, role, departmentId,
-        selectedDeptId: departmentId || null,
-        linkedAt: new Date().toISOString(),
-      };
-      await saveTgSession(tid, sessionData);
-      ctx.session = {};
-
-      const depts     = await getDepartments();
-      const userDepts = isAdmin(role)
-        ? depts
-        : depts.filter(d => !departmentId || d.id === departmentId);
-
-      const adminTag = isAdmin(role)
-        ? `\n🛡 Role: *${role}*`
-        : '';
-
-      if (userDepts.length === 0) {
-        return ctx.reply(
-          `✅ *Login kamyaab!*\n\nWelcome *${displayName}!* 🎉${adminTag}\n\n` +
-          `❌ Koi department access nahi.\nAdmin se rabta karein.`,
-          { parse_mode: 'Markdown' }
-        );
-      }
-
-      if (userDepts.length === 1) {
-        await saveTgSession(tid, { ...sessionData, selectedDeptId: userDepts[0].id });
-        return ctx.reply(
-          `✅ *Login kamyaab!*\n\nWelcome *${displayName}!* 🎉${adminTag}\n\n` +
-          `🏢 *${userDepts[0].name}* bot se connected!\n\nAb koi bhi sawal karein! 🚀`,
-          { parse_mode: 'Markdown' }
-        );
-      }
-
-      // Multiple departments → show picker
-      return ctx.reply(
-        `✅ *Login kamyaab!*\n\nWelcome *${displayName}!* 🎉${adminTag}\n\n` +
-        `Kaun sa department?`,
-        { parse_mode: 'Markdown', ...buildDeptKeyboard(userDepts) }
-      );
+      await safeSend(ctx, reply);
 
     } catch (err) {
-      ctx.session.step  = 'email';
-      ctx.session.email = undefined;
-
-      const errMsg =
-        err.message?.includes('INVALID_PASSWORD') ||
-        err.message?.includes('EMAIL_NOT_FOUND')  ||
-        err.message?.includes('INVALID_LOGIN_CREDENTIALS')
-          ? '❌ *Email ya password galat hai.*'
-          : `❌ *Login fail:* ${err.message}`;
-
-      return ctx.reply(
-        `${errMsg}\n\nDobara try karein:\n\n📧 *Email* enter karein:`,
-        { parse_mode: 'Markdown' }
-      );
+      console.error(`[${dept.name}] chat error:`, err.message);
+      await ctx.reply('❌ Jawab nahi mila. Thodi der baad try karein.');
     }
-  }
-
-  // ─ Chat flow
-  const sess = await getTgSession(tid);
-
-  if (!sess?.uid) {
-    ctx.session = { step: 'email' };
-    return ctx.reply(
-      '🔐 Pehle login karein.\n\n📧 *Email* enter karein:',
-      { parse_mode: 'Markdown' }
-    );
-  }
-
-  if (!sess.selectedDeptId) {
-    const depts = await getAccessibleDepts(sess);
-    return ctx.reply(
-      '🏢 Pehle department choose karein:',
-      buildDeptKeyboard(depts)
-    );
-  }
-
-  // Typing indicator
-  await ctx.replyWithChatAction('typing');
-
-  try {
-    const dept = await getDepartment(sess.selectedDeptId);
-    if (!dept) {
-      return ctx.reply('❌ Department nahi mila. /switch se change karein.');
-    }
-
-    const history = await getChatHistory(sess.uid, sess.selectedDeptId);
-    const reply   = await gptReply(dept, history, text);
-
-    await saveChatHistory(sess.uid, sess.selectedDeptId, [
-      ...history,
-      { role: 'user',      content: text,  timestamp: Date.now(), source: 'telegram' },
-      { role: 'assistant', content: reply, timestamp: Date.now(), source: 'telegram' },
-    ]);
-
-    await safeSend(ctx, reply);
-
-  } catch (err) {
-    console.error('Chat error:', err.message);
-    await ctx.reply('❌ Jawab nahi mila. Thodi der baad dobara try karein.');
-  }
-});
+  });
+}
 
 // ═══════════════════════════════════════════════════════════
-//  Express health-check server (required by Render Web Service)
+//  Launch one department bot (with retry on 409)
 // ═══════════════════════════════════════════════════════════
 
-const app = express();
-app.get('/',       (_, res) => res.send('🤖 BioPharma Telegram Bot is running!'));
-app.get('/health', (_, res) => res.json({ ok: true, uptime: process.uptime() }));
-app.listen(PORT, () => console.log(`✅ Health server on port ${PORT}`));
+async function launchDeptBot(dept) {
+  const token = dept.telegramBotToken;
+  if (!token) return;
 
-// ═══════════════════════════════════════════════════════════
-//  Launch
-// ═══════════════════════════════════════════════════════════
+  // Skip if already running with same token
+  const existing = activeBots.get(dept.id);
+  if (existing?.token === token) return;
 
-async function start() {
-  // Express health server is already listening — Render health checks will pass during startup wait
-
-  console.log('🤖 BioPharma Telegram Bot starting (polling mode)...');
-
-  try {
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-    console.log('✅ Webhook cleared');
-  } catch (e) {
-    console.log('ℹ️ deleteWebhook:', e.message);
+  // Stop old bot if token changed
+  if (existing) {
+    try { existing.bot.stop('token-changed'); } catch {}
+    activeBots.delete(dept.id);
+    await sleep(2000);
   }
 
-  // Retry loop — handles 409 from Render rolling deploy overlap
-  for (let attempt = 1; attempt <= 6; attempt++) {
+  const bot = new Telegraf(token);
+  bot.use(session());
+  setupHandlers(bot, dept);
+
+  for (let attempt = 1; attempt <= 4; attempt++) {
     try {
-      if (attempt > 1) {
-        console.log(`⏳ Waiting 35s for previous connection to expire... (attempt ${attempt}/6)`);
-        await new Promise(r => setTimeout(r, 35000));
-      }
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
       await bot.launch({
         allowedUpdates: ['message', 'callback_query'],
         dropPendingUpdates: true,
       });
-      console.log('✅ Bot is live! Polling Telegram...');
+      console.log(`✅ [${dept.name}] bot live`);
+      activeBots.set(dept.id, { bot, token });
       return;
     } catch (err) {
-      console.error(`⚠️ Attempt ${attempt}/6: ${err.message}`);
-      if (attempt === 6) throw err;
+      console.error(`⚠️ [${dept.name}] attempt ${attempt}/4: ${err.message}`);
+      if (err.message.includes('409') && attempt < 4) {
+        console.log(`⏳ [${dept.name}] waiting 35s for old connection to expire...`);
+        await sleep(35000);
+      } else if (attempt === 4) {
+        console.error(`❌ [${dept.name}] failed to launch`);
+      }
     }
   }
 }
 
-start().catch(err => { console.error('❌ Bot launch failed:', err.message); process.exit(1); });
+// ═══════════════════════════════════════════════════════════
+//  Refresh — detect new / changed tokens every 5 minutes
+// ═══════════════════════════════════════════════════════════
 
-process.once('SIGINT',  () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+async function refreshBots() {
+  const depts = await getDepartments();
+  const withToken = depts.filter(d => d.telegramBotToken);
+  console.log(`🔄 Refresh: ${withToken.length} department(s) with token`);
+  for (const dept of withToken) {
+    await launchDeptBot(dept);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Express health check
+// ═══════════════════════════════════════════════════════════
+
+const app = express();
+app.get('/', (_, res) =>
+  res.send(`🤖 BioPharma Multi-Dept Bot — ${activeBots.size} bot(s) running`)
+);
+app.get('/health', (_, res) =>
+  res.json({
+    ok: true,
+    bots: activeBots.size,
+    departments: [...activeBots.keys()],
+    uptime: process.uptime(),
+  })
+);
+app.listen(PORT, () => console.log(`✅ Health server on port ${PORT}`));
+
+// ═══════════════════════════════════════════════════════════
+//  Main
+// ═══════════════════════════════════════════════════════════
+
+async function main() {
+  console.log('🤖 BioPharma Multi-Department Bot Manager starting...');
+  await refreshBots();
+
+  // Auto-detect new department tokens every 5 minutes
+  setInterval(refreshBots, 5 * 60 * 1000);
+
+  process.once('SIGINT',  () => { for (const { bot } of activeBots.values()) bot.stop('SIGINT');  });
+  process.once('SIGTERM', () => { for (const { bot } of activeBots.values()) bot.stop('SIGTERM'); });
+}
+
+main().catch(err => { console.error('❌ Startup failed:', err.message); process.exit(1); });
