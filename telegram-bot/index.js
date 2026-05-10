@@ -128,10 +128,10 @@ async function saveChatHistory(uid, deptId, messages) {
 
 const TELEGRAM_FORMAT = `
 
-TELEGRAM FORMATTING RULES (hamesha follow karein):
+TELEGRAM FORMATTING RULES (always follow these):
 
-1. KABHI markdown table mat banao (| col | col | format BANNED hai)
-2. Data ko bullet card format mein do:
+1. NEVER use markdown tables (| col | col | format is BANNED)
+2. Present data as bullet cards:
 
 <b>📋 Record / Site Name</b>
 • Field 1: Value
@@ -139,12 +139,12 @@ TELEGRAM FORMATTING RULES (hamesha follow karein):
 • Status: ✅ Verified
 ─────────────────
 
-3. Section headings ke liye: <b>🔹 Heading</b>
-4. Bold: <b>important numbers aur terms</b>
+3. Section headings: <b>🔹 Heading</b>
+4. Bold: <b>important numbers and terms</b>
 5. Status emojis: ✅ complete/verified  ❌ failed/missing  ⚠️ pending/review
-6. Agar zyada records hain, top 5-7 dikhao phir summary do
-7. Mobile screen ke liye format karo — short aur clear
-8. User ki language mein jawab do (Urdu ya English)
+6. If many records, show top 5-7 then give a summary
+7. Format for mobile screen — short and clear
+8. Always respond in English
 `;
 
 async function gptReply(dept, history, userText) {
@@ -168,7 +168,7 @@ async function gptReply(dept, history, userText) {
 
   const systemPrompt = dept.systemPrompt
     ? `${dept.systemPrompt}\n\n--- DATA ---\n${ctx}${TELEGRAM_FORMAT}`
-    : `Aap ${dept.name} department ke AI assistant hain. Professional aur mukhtasar jawab dein.\n\n--- DATA ---\n${ctx}${TELEGRAM_FORMAT}`;
+    : `You are the AI assistant for the ${dept.name} department. Give professional and concise answers in English.\n\n--- DATA ---\n${ctx}${TELEGRAM_FORMAT}`;
 
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -222,15 +222,15 @@ function setupHandlers(bot, dept) {
     if (sess?.uid) {
       return ctx.reply(
         `✅ <b>Welcome back, ${sess.displayName || sess.email}!</b>\n\n` +
-        `🏢 <b>${dept.name}</b> bot se connected hain.\n\nKoi bhi sawal karein!`,
+        `🏢 Connected to <b>${dept.name}</b> bot.\n\nAsk me anything!`,
         { parse_mode: 'HTML' }
       );
     }
 
     ctx.session.step = 'email';
     await ctx.reply(
-      `🤖 <b>${dept.name} Bot</b>\n\nBioPharma CRA Platform mein khush amdeed!\n\n` +
-      `📧 Apna <b>email</b> enter karein:`,
+      `🤖 <b>${dept.name} Bot</b>\n\nWelcome to BioPharma CRA Platform!\n\n` +
+      `📧 Please enter your <b>email</b>:`,
       { parse_mode: 'HTML' }
     );
   });
@@ -240,7 +240,7 @@ function setupHandlers(bot, dept) {
     const tid = String(ctx.from.id);
     ctx.session = {};
     await deleteTgSession(tid, dept.id);
-    await ctx.reply('👋 <b>Logout ho gaye.</b>\n\n/start se dobara login karein.', {
+    await ctx.reply('👋 <b>Logged out.</b>\n\nUse /start to login again.', {
       parse_mode: 'HTML',
     });
   });
@@ -250,7 +250,7 @@ function setupHandlers(bot, dept) {
     await ctx.reply(
       `<b>${dept.name} Bot</b>\n\n` +
       `/start  — Login\n/logout — Logout\n/help   — Help\n\n` +
-      `Login ke baad koi bhi sawal karein!`,
+      `After login, ask me anything!`,
       { parse_mode: 'HTML' }
     );
   });
@@ -264,23 +264,23 @@ function setupHandlers(bot, dept) {
     // ─ Email step
     if (ctx.session?.step === 'email') {
       if (!text.includes('@')) {
-        return ctx.reply('❌ Valid email enter karein.\n\n📧 <b>Email:</b>', { parse_mode: 'HTML' });
+        return ctx.reply('❌ Please enter a valid email address.\n\n📧 <b>Email:</b>', { parse_mode: 'HTML' });
       }
       ctx.session.email = text.toLowerCase().trim();
       ctx.session.step  = 'password';
-      return ctx.reply('🔑 <b>Password</b> enter karein:', { parse_mode: 'HTML' });
+      return ctx.reply('🔑 Enter your <b>password</b>:', { parse_mode: 'HTML' });
     }
 
     // ─ Password step
     if (ctx.session?.step === 'password') {
-      await ctx.reply('⏳ Verify ho raha hai...');
+      await ctx.reply('⏳ Verifying...');
       try {
         const authUser = await signIn(ctx.session.email, text);
         const profile  = await getUserProfile(authUser.uid);
         const role     = profile?.role || 'user';
         const name     = authUser.displayName || profile?.displayName || authUser.email.split('@')[0];
 
-        // Access check
+        // Access check — admins and superadmins always have access
         const hasAccess =
           role === 'admin' || role === 'superadmin' ||
           (profile?.assignedDepartments || []).includes(dept.id);
@@ -288,7 +288,7 @@ function setupHandlers(bot, dept) {
         if (!hasAccess) {
           ctx.session = {};
           return ctx.reply(
-            `❌ <b>Access nahi hai.</b>\n\nAap <b>${dept.name}</b> department ke liye authorized nahi hain.\nAdmin se rabta karein.`,
+            `❌ <b>Access Denied.</b>\n\nYou are not authorized for the <b>${dept.name}</b> department.\nPlease contact your admin.`,
             { parse_mode: 'HTML' }
           );
         }
@@ -304,8 +304,8 @@ function setupHandlers(bot, dept) {
           ? `\n🛡 Role: <b>${role}</b>` : '';
 
         return ctx.reply(
-          `✅ <b>Login kamyaab!</b>\n\nWelcome <b>${name}!</b> 🎉${adminBadge}\n\n` +
-          `🏢 <b>${dept.name}</b> bot se connected!\n\nAb koi bhi sawal karein! 🚀`,
+          `✅ <b>Login Successful!</b>\n\nWelcome <b>${name}!</b> 🎉${adminBadge}\n\n` +
+          `🏢 Connected to <b>${dept.name}</b> bot!\n\nAsk me anything! 🚀`,
           { parse_mode: 'HTML' }
         );
 
@@ -314,9 +314,9 @@ function setupHandlers(bot, dept) {
         ctx.session.email = undefined;
         const errMsg =
           err.message?.includes('INVALID') || err.message?.includes('EMAIL_NOT_FOUND')
-            ? '❌ <b>Email ya password galat hai.</b>'
-            : '❌ Login fail. Dobara try karein.';
-        return ctx.reply(`${errMsg}\n\n📧 <b>Email</b> enter karein:`, { parse_mode: 'HTML' });
+            ? '❌ <b>Invalid email or password.</b>'
+            : '❌ Login failed. Please try again.';
+        return ctx.reply(`${errMsg}\n\n📧 Enter your <b>email</b>:`, { parse_mode: 'HTML' });
       }
     }
 
@@ -324,7 +324,7 @@ function setupHandlers(bot, dept) {
     const sess = await getTgSession(tid, dept.id);
     if (!sess?.uid) {
       ctx.session = { step: 'email' };
-      return ctx.reply('🔐 Pehle login karein.\n\n📧 <b>Email</b> enter karein:', { parse_mode: 'HTML' });
+      return ctx.reply('🔐 Please login first.\n\n📧 Enter your <b>email</b>:', { parse_mode: 'HTML' });
     }
 
     await ctx.replyWithChatAction('typing');
@@ -343,7 +343,7 @@ function setupHandlers(bot, dept) {
 
     } catch (err) {
       console.error(`[${dept.name}] chat error:`, err.message);
-      await ctx.reply('❌ Jawab nahi mila. Thodi der baad try karein.');
+      await ctx.reply('❌ Could not get a response. Please try again later.');
     }
   });
 }
@@ -430,6 +430,9 @@ app.listen(PORT, () => console.log(`✅ Health server on port ${PORT}`));
 
 async function main() {
   console.log('🤖 BioPharma Multi-Department Bot Manager starting...');
+  // Wait for old Render instance to fully stop before connecting (avoids 409)
+  console.log('⏳ Waiting 25s for old instance to stop...');
+  await sleep(25000);
   await refreshBots();
 
   // Auto-detect new department tokens every 5 minutes
