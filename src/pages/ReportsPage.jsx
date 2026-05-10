@@ -88,7 +88,17 @@ function ReportCard({ report }) {
         <div className="border-t px-5 pb-5 pt-4" style={{ borderColor: 'rgba(59,130,246,0.1)' }}>
           <div className="rounded-xl p-4"
             style={{ background: 'rgba(0,0,0,0.25)', maxHeight: '500px', overflowY: 'auto' }}>
-            <ReactMarkdown className="bot-markdown" remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown
+              className="bot-markdown"
+              remarkPlugins={[remarkGfm]}
+              components={{
+                table: ({ children }) => (
+                  <div className="bot-table-wrap">
+                    <table>{children}</table>
+                  </div>
+                ),
+              }}
+            >
               {report.content}
             </ReactMarkdown>
           </div>

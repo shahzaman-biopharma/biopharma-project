@@ -195,17 +195,18 @@ function ChatMessage({ msg }) {
         {isUser ? <User size={14} className="text-white" /> : <Bot size={14} className="text-blue-400" />}
       </div>
 
-      <div className={`max-w-[82%] ${isUser ? 'items-end' : 'items-start'} flex flex-col gap-1.5`}>
+      <div className={`min-w-0 ${isUser ? 'max-w-[78%] items-end' : 'max-w-[88%] items-start'} flex flex-col gap-1.5`}>
         <div
-          className={`px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
+          className={`px-4 py-3 rounded-2xl overflow-hidden ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
           style={isUser ? {
             background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
             color: 'white',
             fontSize: '0.875rem',
-            lineHeight: '1.6',
+            lineHeight: '1.65',
           } : {
             background: 'var(--card-bg)',
             border: '1px solid var(--border-clr)',
+            minWidth: 0,
           }}
         >
           {isUser ? (
@@ -214,6 +215,13 @@ function ChatMessage({ msg }) {
             <ReactMarkdown
               className="bot-markdown"
               remarkPlugins={[remarkGfm]}
+              components={{
+                table: ({ children }) => (
+                  <div className="bot-table-wrap">
+                    <table>{children}</table>
+                  </div>
+                ),
+              }}
             >
               {msg.content}
             </ReactMarkdown>
@@ -490,7 +498,7 @@ export default function BotPage() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
         {messages.map((msg, i) => (
           <ChatMessage key={i} msg={msg} />
         ))}
