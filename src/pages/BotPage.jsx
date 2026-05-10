@@ -16,6 +16,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import './BotPage.css';
 
 // ─── Detect if user is asking for a file ─────────────────────────────────────
 
@@ -37,8 +38,6 @@ function generateExcel(fileData) {
 
   for (const sheet of fileData.sheets) {
     const wsData = [];
-
-    // Title rows
     wsData.push([fileData.title]);
     wsData.push([fileData.subtitle || '']);
     wsData.push([]);
@@ -49,7 +48,6 @@ function generateExcel(fileData) {
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-    // Column widths
     const colWidths = sheet.headers.map((h, i) => ({
       wch: Math.max(
         h.length + 4,
@@ -58,7 +56,6 @@ function generateExcel(fileData) {
     }));
     ws['!cols'] = colWidths;
 
-    // Merge title cell across columns
     const cols = sheet.headers.length;
     ws['!merges'] = [
       { s: { r: 0, c: 0 }, e: { r: 0, c: cols - 1 } },
@@ -78,17 +75,14 @@ function generatePDF(fileData) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
 
-  // Header background
   doc.setFillColor(15, 23, 42);
   doc.rect(0, 0, pageW, 38, 'F');
 
-  // Title
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.text(fileData.title, pageW / 2, 16, { align: 'center' });
 
-  // Subtitle
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(148, 163, 184);
@@ -97,7 +91,6 @@ function generatePDF(fileData) {
 
   let yPos = 46;
 
-  // Summary box
   if (fileData.summary) {
     doc.setFillColor(239, 246, 255);
     doc.setDrawColor(59, 130, 246);
@@ -110,9 +103,7 @@ function generatePDF(fileData) {
     yPos += 24;
   }
 
-  // Tables
   for (const sheet of fileData.sheets) {
-    // Sheet name header
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(30, 41, 59);
@@ -125,29 +116,20 @@ function generatePDF(fileData) {
       startY: yPos,
       margin: { left: 14, right: 14 },
       styles: {
-        fontSize: 8,
-        cellPadding: 3,
-        lineColor: [226, 232, 240],
-        lineWidth: 0.3,
-        textColor: [30, 41, 59],
+        fontSize: 8, cellPadding: 3,
+        lineColor: [226, 232, 240], lineWidth: 0.3, textColor: [30, 41, 59],
       },
       headStyles: {
-        fillColor: [59, 130, 246],
-        textColor: [255, 255, 255],
-        fontStyle: 'bold',
-        fontSize: 8.5,
+        fillColor: [59, 130, 246], textColor: [255, 255, 255],
+        fontStyle: 'bold', fontSize: 8.5,
       },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
-      },
-      tableLineColor: [203, 213, 225],
-      tableLineWidth: 0.3,
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      tableLineColor: [203, 213, 225], tableLineWidth: 0.3,
     });
 
     yPos = doc.lastAutoTable.finalY + 14;
   }
 
-  // Footer on every page
   const pageCount = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -159,6 +141,24 @@ function generatePDF(fileData) {
 
   const fileName = `${fileData.title.replace(/[^a-zA-Z0-9 ]/g, '').trim()}_${format(new Date(), 'yyyy-MM-dd')}.pdf`;
   doc.save(fileName);
+}
+
+// ─── Status colour for table cells ───────────────────────────────────────────
+
+const STATUS_CLASSES = {
+  verified: 'bp-td-green', resolved: 'bp-td-green', complete: 'bp-td-green',
+  pass: 'bp-td-green', passed: 'bp-td-green', yes: 'bp-td-green', active: 'bp-td-green',
+  pending: 'bp-td-red', open: 'bp-td-red', failed: 'bp-td-red',
+  critical: 'bp-td-red', missing: 'bp-td-red', no: 'bp-td-red', overdue: 'bp-td-red',
+  'n/a': 'bp-td-yellow', partial: 'bp-td-yellow', review: 'bp-td-yellow',
+  'in progress': 'bp-td-yellow',
+};
+
+function cellClass(children) {
+  const text = Array.isArray(children)
+    ? children.filter(c => typeof c === 'string').join('').trim().toLowerCase()
+    : typeof children === 'string' ? children.trim().toLowerCase() : '';
+  return STATUS_CLASSES[text] || '';
 }
 
 // ─── Message bubble ───────────────────────────────────────────────────────────
@@ -182,66 +182,33 @@ function ChatMessage({ msg }) {
   };
 
   return (
-    <div className={`flex gap-2 w-full ${isUser ? 'flex-row-reverse' : ''} animate-fade-in`}>
-      {/* Avatar — fixed 32px, never shrinks */}
-      <div className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center"
-        style={isUser ? {
-          background: 'linear-gradient(135deg, #3b82f6, #06b6d4)',
-        } : {
-          background: 'rgba(59,130,246,0.15)',
-          border: '1px solid rgba(59,130,246,0.2)',
-        }}>
-        {isUser ? <User size={14} className="text-white" /> : <Bot size={14} className="text-blue-400" />}
+    <div className={`bp-msg-row${isUser ? ' is-user' : ''}`}>
+      <div className={`bp-avatar ${isUser ? 'user' : 'bot'}`}>
+        {isUser
+          ? <User size={13} color="#fff" />
+          : <Bot size={13} color="#60a5fa" />}
       </div>
 
-      {/* Wrapper — flex-1 takes all remaining width after avatar+gap, min-w-0 prevents overflow */}
-      <div className={`flex-1 min-w-0 flex flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}>
-
-        {/* Bubble */}
-        <div
-          className={`px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
-          style={isUser ? {
-            maxWidth: '85%',
-            background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
-            color: 'white',
-            fontSize: '0.875rem',
-            lineHeight: '1.65',
-            wordBreak: 'break-word',
-            overflowWrap: 'break-word',
-          } : {
-            maxWidth: '100%',
-            background: 'var(--card-bg)',
-            border: '1px solid var(--border-clr)',
-            overflowWrap: 'break-word',
-            wordBreak: 'break-word',
-          }}
-        >
+      <div className="bp-bubble-col">
+        <div className={`bp-bubble ${isUser ? 'sent' : 'received'}`}>
           {isUser ? (
-            <span className="text-sm leading-relaxed" style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{msg.content}</span>
+            msg.content
           ) : (
             <ReactMarkdown
-              className="bot-markdown"
+              className="bp-markdown"
               remarkPlugins={[remarkGfm]}
               components={{
                 table: ({ children }) => (
                   <>
-                    <div className="bot-table-wrap">
-                      <table>{children}</table>
+                    <div className="bp-table-wrapper">
+                      <table className="bp-table">{children}</table>
                     </div>
-                    <p className="bot-scroll-hint">← swipe to see more →</p>
+                    <p className="bp-scroll-hint">← swipe to see more →</p>
                   </>
                 ),
-                td: ({ children }) => {
-                  const text = typeof children === 'string' ? children.trim().toLowerCase() : '';
-                  const colors = {
-                    verified: 'bot-td-green', resolved: 'bot-td-green', complete: 'bot-td-green',
-                    pass: 'bot-td-green', passed: 'bot-td-green', yes: 'bot-td-green', active: 'bot-td-green',
-                    pending: 'bot-td-red', open: 'bot-td-red', failed: 'bot-td-red',
-                    critical: 'bot-td-red', missing: 'bot-td-red', no: 'bot-td-red', overdue: 'bot-td-red',
-                    'n/a': 'bot-td-yellow', partial: 'bot-td-yellow', review: 'bot-td-yellow', 'in progress': 'bot-td-yellow',
-                  };
-                  return <td className={colors[text] || undefined}>{children}</td>;
-                },
+                td: ({ children }) => (
+                  <td className={cellClass(children) || undefined}>{children}</td>
+                ),
               }}
             >
               {msg.content}
@@ -249,38 +216,36 @@ function ChatMessage({ msg }) {
           )}
         </div>
 
-        {/* File download buttons */}
         {msg.fileData && (
-          <div className="flex items-center gap-2 mt-1">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
-              style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)' }}>
-              <Table2 size={11} className="text-blue-400" />
-              <span style={{ color: 'var(--text-secondary)' }}>
-                {msg.fileData.sheets?.length} sheet{msg.fileData.sheets?.length !== 1 ? 's' : ''} ready
-              </span>
+          <div className="bp-file-row">
+            <div className="bp-file-info">
+              <Table2 size={11} color="#60a5fa" />
+              <span>{msg.fileData.sheets?.length} sheet{msg.fileData.sheets?.length !== 1 ? 's' : ''} ready</span>
             </div>
             <button
+              className="bp-excel-btn"
               onClick={() => handleDownload('excel')}
               disabled={generating.excel}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-emerald-400 transition-all disabled:opacity-50"
-              style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)' }}
             >
-              {generating.excel ? <Loader2 size={11} className="animate-spin" /> : <FileSpreadsheet size={11} />}
+              {generating.excel
+                ? <Loader2 size={11} className="bp-animate-spin" />
+                : <FileSpreadsheet size={11} />}
               Excel
             </button>
             <button
+              className="bp-pdf-btn"
               onClick={() => handleDownload('pdf')}
               disabled={generating.pdf}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 transition-all disabled:opacity-50"
-              style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)' }}
             >
-              {generating.pdf ? <Loader2 size={11} className="animate-spin" /> : <FileDown size={11} />}
+              {generating.pdf
+                ? <Loader2 size={11} className="bp-animate-spin" />
+                : <FileDown size={11} />}
               PDF
             </button>
           </div>
         )}
 
-        <span className="text-xs px-1" style={{ color: 'var(--text-muted)' }}>
+        <span className="bp-time">
           {msg.timestamp ? format(new Date(msg.timestamp), 'HH:mm') : ''}
         </span>
       </div>
@@ -384,7 +349,6 @@ export default function BotPage() {
       const wantsFile = isFileRequest(userMsg);
 
       if (wantsFile) {
-        // Parallel: text reply + structured file data
         const [reply, fileData] = await Promise.all([
           chatWithBot({
             systemPrompt: department.systemPrompt || `You are the AI assistant for ${department.name}.`,
@@ -457,118 +421,100 @@ export default function BotPage() {
 
   if (pageLoading) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Loading bot...</p>
+      <div className="bp-page-loading">
+        <div className="bp-spinner-wrap">
+          <div className="bp-spinner" />
+          <p className="bp-spinner-text">Loading bot...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: 'var(--bg-base)' }}>
-      {/* Header */}
-      <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-6 py-3 sm:py-4 border-b flex-shrink-0"
-        style={{ borderColor: 'var(--border-clr)', background: 'var(--sidebar-bg)' }}>
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0"
-          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}
-        >
+    <div className="bp-page">
+
+      {/* ── Header ── */}
+      <div className="bp-header">
+        <button className="bp-header-btn" onClick={() => navigate('/dashboard')}>
           <ArrowLeft size={15} />
         </button>
 
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-          style={{ background: 'linear-gradient(135deg, #3b82f6, #06b6d4)' }}>
-          <Bot size={18} className="text-white" />
+        <div className="bp-header-icon">
+          <Bot size={17} color="#fff" />
         </div>
 
-        <div className="flex-1 min-w-0">
-          <h1 className="font-semibold text-sm sm:text-base truncate" style={{ color: 'var(--text-primary)' }}>
-            {department?.name}
-          </h1>
-          <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-muted)' }}>
-            <div className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
-            <span className="hidden sm:inline">AI Assistant Active</span>
-            <span className="sm:hidden">Active</span>
+        <div className="bp-header-info">
+          <div className="bp-header-title">{department?.name}</div>
+          <div className="bp-header-status">
+            <div className="bp-status-dot" />
+            <span>AI Assistant Active</span>
             {dataLoaded && department?.dataSources?.length > 0 && (
               <>
-                <span className="hidden sm:inline">•</span>
-                <Database size={10} className="hidden sm:block" />
-                <span className="hidden sm:inline">{department.dataSources.length} source{department.dataSources.length > 1 ? 's' : ''}</span>
+                <span>•</span>
+                <Database size={10} />
+                <span>{department.dataSources.length} source{department.dataSources.length > 1 ? 's' : ''}</span>
               </>
             )}
           </div>
         </div>
 
-        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs flex-shrink-0"
-          style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'var(--text-secondary)' }}>
-          <FileSpreadsheet size={11} className="text-blue-400" />
+        <div className="bp-header-badge">
+          <FileSpreadsheet size={11} color="#60a5fa" />
           PDF / Excel
         </div>
 
-        <button
-          onClick={clearChat}
-          title="Clear chat"
-          className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center transition-colors flex-shrink-0"
-          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}
-        >
+        <button className="bp-header-btn" onClick={clearChat} title="Clear chat">
           <RefreshCw size={14} />
         </button>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
+      {/* ── Messages ── */}
+      <div className="bp-messages">
         {messages.map((msg, i) => (
           <ChatMessage key={i} msg={msg} />
         ))}
 
         {loading && (
-          <div className="flex gap-3 animate-fade-in">
-            <div className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center"
-              style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.2)' }}>
-              <Bot size={14} className="text-blue-400" />
+          <div className="bp-loading-row">
+            <div className="bp-avatar bot">
+              <Bot size={13} color="#60a5fa" />
             </div>
-            <div className="px-4 py-3 rounded-2xl rounded-tl-sm"
-              style={{ background: 'var(--card-bg)', border: '1px solid var(--border-clr)' }}>
-              <div className="flex items-center gap-2">
-                <Loader2 size={14} className="animate-spin text-blue-400" />
-                <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>Analyzing...</span>
-              </div>
+            <div className="bp-loading-bubble">
+              <Loader2 size={14} color="#60a5fa" className="bp-animate-spin" />
+              <span className="bp-loading-text">Analyzing...</span>
             </div>
           </div>
         )}
+
         <div ref={bottomRef} />
       </div>
 
-      {/* Input bar */}
-      <div className="px-3 sm:px-6 pb-4 sm:pb-6 pt-3 border-t flex-shrink-0" style={{ borderColor: 'var(--border-clr)' }}>
-        <div className="flex items-end gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-2xl"
-          style={{ background: 'var(--glass-bg)', border: '1px solid rgba(59,130,246,0.2)' }}>
-          <Sparkles size={15} className="text-blue-400 flex-shrink-0 mb-1" />
+      {/* ── Input bar ── */}
+      <div className="bp-input-area">
+        <div className="bp-input-wrap">
+          <Sparkles size={15} color="#60a5fa" style={{ flexShrink: 0, marginBottom: 2 }} />
           <textarea
             ref={inputRef}
+            className="bp-textarea"
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
             placeholder={`Ask anything... or "generate Excel report"`}
             rows={1}
-            className="flex-1 bg-transparent placeholder-slate-500 text-sm outline-none resize-none"
-            style={{ color: 'var(--text-primary)', maxHeight: '100px' }}
           />
           <button
+            className="bp-send-btn"
             onClick={() => handleSend()}
             disabled={!input.trim() || loading}
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center gradient-btn disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
           >
-            <Send size={14} className="text-white" />
+            <Send size={14} color="#fff" />
           </button>
         </div>
-        <p className="text-xs text-center mt-1.5 hidden sm:block" style={{ color: 'var(--text-muted)' }}>
+        <p className="bp-input-hint">
           Enter to send • Shift+Enter for new line • Ask for PDF/Excel to download files
         </p>
       </div>
+
     </div>
   );
 }
