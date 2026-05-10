@@ -925,7 +925,13 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* Tabs — scrollable on mobile */}
+      {loading ? (
+        <div className="flex items-center justify-center py-24">
+          <Loader2 size={24} className="animate-spin text-blue-400" />
+        </div>
+      ) : (
+      <>
+      {/* Tabs — scrollable on mobile, only rendered after perms are loaded */}
       <div className="flex gap-1 mb-5 border-b overflow-x-auto pb-px" style={{ borderColor: 'rgba(59,130,246,0.1)' }}>
         {visibleTabs.map(({ id, label, icon: Icon }) => (
           <button
@@ -943,11 +949,7 @@ export default function SettingsPage() {
         ))}
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 size={24} className="animate-spin text-blue-400" />
-        </div>
-      ) : tab === 'departments' ? (
+      {tab === 'departments' ? (
         /* ─── DEPARTMENTS TAB ─── */
         <div>
           {!showForm && (
@@ -1465,6 +1467,8 @@ export default function SettingsPage() {
           saving={savingAdminPerms}
         />
       ) : null}
+      </>
+      )}
     </div>
   );
 }
