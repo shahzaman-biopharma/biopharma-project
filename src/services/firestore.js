@@ -182,13 +182,26 @@ export async function createNotification({ type, title, message, recipientId, tr
 
 export function subscribeToNotifications(userId, isAdmin, callback) {
   const recipientIds = isAdmin ? [userId, 'admins'] : [userId];
+  // No orderBy — avoids composite index requirement; sort client-side instead
   const q = query(
     collection(db, 'notifications'),
-    where('recipientId', 'in', recipientIds),
-    orderBy('createdAt', 'desc'),
-    limit(50)
+    where('recipientId', 'in', recipientIds)
   );
-  return onSnapshot(q, snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+  return onSnapshot(
+    q,
+    snap => {
+      const docs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => {
+          const ta = a.createdAt?.toMillis?.() ?? 0;
+          const tb = b.createdAt?.toMillis?.() ?? 0;
+          return tb - ta;
+        })
+        .slice(0, 50);
+      callback(docs);
+    },
+    err => console.error('[Notifications] subscription failed:', err.code, err.message)
+  );
 }
 
 export async function markNotificationRead(notifId, userId) {
@@ -206,7 +219,10 @@ export async function markNotificationRead(notifId, userId) {
 
 export async function markAllNotificationsRead(userId, isAdmin) {
   const recipientIds = isAdmin ? [userId, 'admins'] : [userId];
-  const q = query(collection(db, 'notifications'), where('recipientId', 'in', recipientIds));
+  const q = query(
+    collection(db, 'notifications'),
+    where('recipientId', 'in', recipientIds)
+  );
   const snap = await getDocs(q);
   const batch = writeBatch(db);
   snap.docs.forEach(d => {

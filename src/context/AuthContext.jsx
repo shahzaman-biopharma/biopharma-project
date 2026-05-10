@@ -9,7 +9,7 @@ import {
   browserLocalPersistence,
 } from 'firebase/auth';
 import { auth } from '../services/firebase';
-import { createUserProfile, getUserProfile } from '../services/firestore';
+import { createUserProfile, getUserProfile, createNotification } from '../services/firestore';
 
 const AuthContext = createContext(null);
 
@@ -67,6 +67,16 @@ export function AuthProvider({ children }) {
       assignedDepartments: [],
       isActive: true,
     });
+    if (!isSuperAdmin) {
+      createNotification({
+        type: 'new_user',
+        title: 'New User Signed Up',
+        message: `${displayName} (${email}) has registered and is awaiting department access.`,
+        recipientId: 'admins',
+        triggeredBy: cred.user.uid,
+        triggeredByName: displayName,
+      }).catch(e => console.warn('Signup notification skipped:', e.message));
+    }
     return cred;
   };
 
