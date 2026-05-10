@@ -14,6 +14,8 @@ import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // ─── Detect if user is asking for a file ─────────────────────────────────────
 
@@ -193,21 +195,29 @@ function ChatMessage({ msg }) {
         {isUser ? <User size={14} className="text-white" /> : <Bot size={14} className="text-blue-400" />}
       </div>
 
-      <div className={`max-w-[78%] ${isUser ? 'items-end' : 'items-start'} flex flex-col gap-1.5`}>
+      <div className={`max-w-[82%] ${isUser ? 'items-end' : 'items-start'} flex flex-col gap-1.5`}>
         <div
-          className={`px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-            isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'
-          }`}
+          className={`px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
           style={isUser ? {
             background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
             color: 'white',
+            fontSize: '0.875rem',
+            lineHeight: '1.6',
           } : {
             background: 'var(--card-bg)',
             border: '1px solid var(--border-clr)',
-            color: 'var(--text-primary)',
           }}
         >
-          {msg.content}
+          {isUser ? (
+            <span className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</span>
+          ) : (
+            <ReactMarkdown
+              className="bot-markdown"
+              remarkPlugins={[remarkGfm]}
+            >
+              {msg.content}
+            </ReactMarkdown>
+          )}
         </div>
 
         {/* File download buttons */}

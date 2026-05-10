@@ -5,10 +5,25 @@ const openai = new OpenAI({
   dangerouslyAllowBrowser: true,
 });
 
+const FORMAT_INSTRUCTIONS = `
+FORMATTING RULES (always follow):
+- Use **bold** for important terms, numbers, and key findings
+- Use ## for main sections, ### for subsections
+- Use bullet points (- item) for lists — never run them together in a sentence
+- Use numbered lists (1. 2. 3.) for steps or ranked items
+- Use markdown tables for any comparative or tabular data (| Col | Col |)
+- Use > blockquote for important notes or warnings
+- Keep paragraphs short and justify content clearly
+- Never output raw ### or ** without formatting intent
+- Respond in the same language the user writes in (Urdu or English)
+`;
+
 export async function chatWithBot({ systemPrompt, messages, dataContext = '' }) {
-  const systemContent = dataContext
-    ? `${systemPrompt}\n\n--- DATA CONTEXT ---\n${dataContext}`
-    : systemPrompt;
+  const systemContent = [
+    systemPrompt,
+    FORMAT_INSTRUCTIONS,
+    dataContext ? `--- DATA CONTEXT ---\n${dataContext}` : '',
+  ].filter(Boolean).join('\n\n');
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -24,24 +39,35 @@ export async function chatWithBot({ systemPrompt, messages, dataContext = '' }) 
 }
 
 export async function generateReport({ systemPrompt, dataContext, reportType, departmentName }) {
-  const prompt = `You are a professional report generator for ${departmentName} department in a Clinical Research Associate (CRA) company.
+  const prompt = `You are a professional report generator for the **${departmentName}** department in a Clinical Research Associate (CRA) biopharma company.
 
-Generate a detailed ${reportType} report based on the following data:
+Generate a detailed **${reportType} report** based on the data below.
 
-${dataContext}
+${dataContext ? `--- DATA ---\n${dataContext}` : ''}
+${systemPrompt ? `--- DEPARTMENT CONTEXT ---\n${systemPrompt}` : ''}
 
-Department System Context:
-${systemPrompt}
+Structure the report with these exact sections using markdown:
 
-Create a comprehensive, professional report with:
-1. Executive Summary
-2. Key Metrics & Performance Indicators
-3. Data Analysis
-4. Issues & Findings
-5. Recommendations
-6. Next Steps
+## Executive Summary
+(2–3 sentence overview with key numbers)
 
-Format with clear sections and bullet points. Be specific with numbers and data.`;
+## Key Metrics & KPIs
+(Use a markdown table with | Metric | Value | Status | columns)
+
+## Data Analysis
+(Bullet points with specific findings from the data)
+
+## Issues & Findings
+(Numbered list of issues found, severity noted)
+
+## Recommendations
+(Actionable bullet points)
+
+## Next Steps
+(Numbered list with responsible party if known)
+
+---
+RULES: Use **bold** for numbers and critical items. Use tables wherever data can be compared. Keep language professional and precise.`;
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -71,9 +97,10 @@ The prompt should:
 - Set professional tone for pharma/clinical research
 - Guide it to analyze data from Excel/Google Sheets
 - Instruct it to give precise, data-driven answers
-- Keep responses professional and concise
+- Always format responses using markdown: ## headings, **bold** for key data, bullet lists, and tables for comparisons
+- Respond in the user's language (Urdu or English)
 
-Write only the system prompt, nothing else.`,
+Write only the system prompt text, nothing else.`,
       },
     ],
     temperature: 0.6,

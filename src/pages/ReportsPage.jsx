@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function ReportCard({ report }) {
   const [expanded, setExpanded] = useState(false);
@@ -84,9 +86,11 @@ function ReportCard({ report }) {
       {/* Expanded content */}
       {expanded && (
         <div className="border-t px-5 pb-5 pt-4" style={{ borderColor: 'rgba(59,130,246,0.1)' }}>
-          <div className="rounded-xl p-4 text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-mono text-xs"
-            style={{ background: 'rgba(0,0,0,0.3)', maxHeight: '400px', overflowY: 'auto' }}>
-            {report.content}
+          <div className="rounded-xl p-4"
+            style={{ background: 'rgba(0,0,0,0.25)', maxHeight: '500px', overflowY: 'auto' }}>
+            <ReactMarkdown className="bot-markdown" remarkPlugins={[remarkGfm]}>
+              {report.content}
+            </ReactMarkdown>
           </div>
         </div>
       )}
