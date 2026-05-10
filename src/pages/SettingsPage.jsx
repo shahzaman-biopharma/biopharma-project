@@ -705,7 +705,7 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
-      ) : (
+      ) : tab === 'users' ? (
         /* ─── USERS TAB ─── */
         <div>
           {/* Header row with Create User button */}
