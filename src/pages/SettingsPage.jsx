@@ -402,12 +402,20 @@ export default function SettingsPage() {
   useEffect(() => {
     const load = async () => {
       setLoading(true);
-      const [depts, usrs, rptSettings] = await Promise.all([
-        getAllDepartments(), getAllUsers(), getReportSettings(),
-      ]);
-      setDepartments(depts);
-      setUsers(usrs);
-      if (rptSettings) setReportSettings(rptSettings);
+      try {
+        const [depts, usrs] = await Promise.all([getAllDepartments(), getAllUsers()]);
+        setDepartments(depts);
+        setUsers(usrs);
+      } catch (e) {
+        console.error('Failed to load departments/users:', e);
+        toast.error('Failed to load data. Check Firestore permissions.');
+      }
+      try {
+        const rptSettings = await getReportSettings();
+        if (rptSettings) setReportSettings(rptSettings);
+      } catch {
+        // settings collection not accessible yet — rules not deployed
+      }
       setLoading(false);
     };
     load();
