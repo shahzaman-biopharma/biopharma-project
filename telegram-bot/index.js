@@ -776,12 +776,25 @@ app.listen(PORT, () => console.log(`✅ Health server on port ${PORT}`));
 // ─── Launch ───────────────────────────────────────────────────────────────────
 async function main() {
   console.log('🤖 BioPharma CRA Bot starting...');
-  console.log('⏳ Waiting 25s for old instance to stop...');
-  await sleep(25000);
 
-  await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-  await bot.launch({ allowedUpdates: ['message', 'callback_query'], dropPendingUpdates: true });
-  console.log('✅ Bot is live! Polling Telegram...');
+  try { await bot.telegram.deleteWebhook({ drop_pending_updates: true }); } catch {}
+
+  // On Render rolling deploys the old instance keeps polling for up to ~60s after
+  // the new instance passes its health check. Retry on 409 instead of a fixed sleep.
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    try {
+      await bot.launch({ allowedUpdates: ['message', 'callback_query'], dropPendingUpdates: true });
+      console.log(`✅ Bot is live! Polling Telegram...`);
+      break;
+    } catch (err) {
+      if (err.message?.includes('409') && attempt < 12) {
+        console.log(`⚠️  409 Conflict — old instance still running. Retry ${attempt}/12 in 15s...`);
+        await sleep(15000);
+      } else {
+        throw err;
+      }
+    }
+  }
 
   process.once('SIGINT',  () => { try { bot.stop('SIGINT');  } catch {} process.exit(0); });
   process.once('SIGTERM', () => { try { bot.stop('SIGTERM'); } catch {} process.exit(0); });
