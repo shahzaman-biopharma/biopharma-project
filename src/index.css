@@ -165,6 +165,7 @@
   line-height: 1.75;
   color: var(--text-primary);
   word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* ── Headings — clear gaps so new sections are obvious ── */
@@ -236,47 +237,96 @@
 .bot-markdown li > ul,
 .bot-markdown li > ol { margin: 0.25rem 0 0.25rem 1rem; }
 
-/* ── TABLE — full cell borders, bubble handles scroll ── */
+/* ── TABLE — ChatGPT-style, full borders, mobile horizontal scroll ── */
 .bot-table-wrap {
-  margin: 0.8rem 0;
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0.85rem 0;
   border-radius: 10px;
-  border: 2px solid rgba(59,130,246,0.4);
-  overflow: hidden;
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(59,130,246,0.35) rgba(15,23,42,0.3);
 }
+.bot-table-wrap::-webkit-scrollbar { height: 5px; }
+.bot-table-wrap::-webkit-scrollbar-track { background: rgba(15,23,42,0.3); border-radius: 5px; }
+.bot-table-wrap::-webkit-scrollbar-thumb { background: rgba(59,130,246,0.4); border-radius: 5px; }
 
 .bot-markdown table {
   width: 100%;
   min-width: max-content;
   border-collapse: collapse;
   font-size: 0.8rem;
+  line-height: 1.5;
+  table-layout: auto;
 }
+
+/* Sticky header row */
 .bot-markdown thead tr {
-  background: linear-gradient(135deg, rgba(59,130,246,0.3), rgba(6,182,212,0.2));
+  background: rgba(10, 16, 36, 0.98);
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
+
+/* Header cells */
 .bot-markdown th {
-  padding: 0.55rem 0.9rem;
+  padding: 10px 16px;
   text-align: left;
   font-weight: 600;
-  font-size: 0.78rem;
-  color: #bfdbfe;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7dd3fc;
   white-space: nowrap;
-  border: 1px solid rgba(59,130,246,0.45);
+  border-bottom: 1px solid rgba(59,130,246,0.45);
+  border-right: 1px solid rgba(51,65,85,0.5);
+  background: rgba(10,16,36,0.98);
 }
+.bot-markdown th:last-child { border-right: none; }
+
+/* Data cells */
 .bot-markdown td {
-  padding: 0.45rem 0.9rem;
-  border: 1px solid rgba(255,255,255,0.1);
+  padding: 9px 16px;
+  border-bottom: 1px solid rgba(51,65,85,0.3);
+  border-right: 1px solid rgba(51,65,85,0.2);
   color: var(--text-primary);
-  vertical-align: top;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-size: 0.8rem;
 }
-.bot-markdown tbody tr:nth-child(even) { background: rgba(59,130,246,0.06); }
-.bot-markdown tbody tr:hover { background: rgba(59,130,246,0.12); transition: background 0.15s; }
+.bot-markdown td:last-child { border-right: none; }
+.bot-markdown tbody tr:last-child td { border-bottom: none; }
+
+/* Zebra rows */
+.bot-markdown tbody tr:nth-child(odd)  { background: rgba(15,23,42,0.4); }
+.bot-markdown tbody tr:nth-child(even) { background: rgba(30,41,59,0.55); }
+
+/* Hover */
+.bot-markdown tbody tr:hover {
+  background: rgba(59,130,246,0.1);
+  transition: background 0.12s ease;
+}
 
 /* ── Light theme tables ── */
-[data-theme="light"] .bot-table-wrap { border-color: rgba(59,130,246,0.35); }
-[data-theme="light"] .bot-markdown thead tr { background: rgba(59,130,246,0.12); }
-[data-theme="light"] .bot-markdown th { color: #1d4ed8; border-color: rgba(59,130,246,0.3); }
-[data-theme="light"] .bot-markdown td { border-color: rgba(0,0,0,0.1); }
-[data-theme="light"] .bot-markdown tbody tr:nth-child(even) { background: rgba(59,130,246,0.05); }
+[data-theme="light"] .bot-table-wrap {
+  border-color: rgba(203,213,225,0.9);
+  scrollbar-color: rgba(59,130,246,0.3) rgba(241,245,249,0.5);
+}
+[data-theme="light"] .bot-markdown thead tr,
+[data-theme="light"] .bot-markdown th {
+  background: #f1f5f9;
+  color: #2563eb;
+  border-bottom-color: rgba(59,130,246,0.35);
+  border-right-color: rgba(203,213,225,0.7);
+}
+[data-theme="light"] .bot-markdown td {
+  border-bottom-color: rgba(226,232,240,0.8);
+  border-right-color: rgba(226,232,240,0.7);
+}
+[data-theme="light"] .bot-markdown tbody tr:nth-child(odd)  { background: #ffffff; }
+[data-theme="light"] .bot-markdown tbody tr:nth-child(even) { background: #f8fafc; }
+[data-theme="light"] .bot-markdown tbody tr:hover { background: rgba(59,130,246,0.06); }
 [data-theme="light"] .bot-markdown strong { color: #1e293b; }
 
 /* ── Code ── */

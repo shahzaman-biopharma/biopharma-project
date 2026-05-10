@@ -197,7 +197,7 @@ function ChatMessage({ msg }) {
       {/* Wrapper — flex-1 takes all remaining width after avatar+gap, min-w-0 prevents overflow */}
       <div className={`flex-1 min-w-0 flex flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}>
 
-        {/* Bubble — maxWidth % of wrapper (flex-1 space), overflow-x for wide tables */}
+        {/* Bubble */}
         <div
           className={`px-4 py-3 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'}`}
           style={isUser ? {
@@ -207,12 +207,13 @@ function ChatMessage({ msg }) {
             fontSize: '0.875rem',
             lineHeight: '1.65',
             wordBreak: 'break-word',
+            overflowWrap: 'break-word',
           } : {
             maxWidth: '100%',
-            overflowX: 'auto',
-            WebkitOverflowScrolling: 'touch',
             background: 'var(--card-bg)',
             border: '1px solid var(--border-clr)',
+            overflowWrap: 'break-word',
+            wordBreak: 'break-word',
           }}
         >
           {isUser ? (
