@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { subscribeToNotifications } from '../../services/firestore';
+import { useNotifications } from '../../context/NotificationsContext';
 import {
   Dna, LayoutDashboard, FileText, Settings,
   LogOut, ChevronRight, Shield, Sun, Moon, X, Bell,
@@ -21,20 +20,8 @@ const adminItems = [
 export default function Sidebar({ onClose }) {
   const { userProfile, logout, isSuperAdmin, isAdmin } = useAuth();
   const { isDark, toggle } = useTheme();
+  const { unreadCount } = useNotifications();
   const navigate = useNavigate();
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  useEffect(() => {
-    if (!userProfile?.uid) return;
-    const unsub = subscribeToNotifications(userProfile.uid, isAdmin, (notifs) => {
-      setUnreadCount(notifs.filter(n =>
-        n.recipientId === 'admins'
-          ? !(n.readBy || []).includes(userProfile.uid)
-          : !n.read
-      ).length);
-    });
-    return unsub;
-  }, [userProfile?.uid, isAdmin]);
 
   const handleLogout = async () => {
     await logout();

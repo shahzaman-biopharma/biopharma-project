@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { subscribeToReports, saveReport, getAllDepartments, getReportSettings, deliverReportToBot } from '../services/firestore';
+import { subscribeToReports, saveReport, getAllDepartments, getReportSettings, deliverReportToBot, createNotification } from '../services/firestore';
 import { generateReport } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
@@ -417,6 +417,31 @@ export default function ReportsPage() {
 
       // Silently push to Telegram users logged into this department
       deliverReportToBot(dept.id, dept.name, content, reportType, period);
+
+      // Notify all admins + dept members
+      const reportLabel = reportType.charAt(0).toUpperCase() + reportType.slice(1);
+      createNotification({
+        type: 'report_generated',
+        title: `${reportLabel} Report Ready`,
+        message: `${dept.name} — ${period} report has been generated.`,
+        recipientId: 'admins',
+        triggeredBy: user.uid,
+        triggeredByName: user.displayName || user.email,
+        departmentId: dept.id,
+        departmentName: dept.name,
+      }).catch(console.error);
+      for (const uid of dept.assignedUsers || []) {
+        createNotification({
+          type: 'report_generated',
+          title: `${reportLabel} Report Ready`,
+          message: `${dept.name} — ${period} report has been generated.`,
+          recipientId: uid,
+          triggeredBy: user.uid,
+          triggeredByName: user.displayName || user.email,
+          departmentId: dept.id,
+          departmentName: dept.name,
+        }).catch(console.error);
+      }
 
       toast.success(`${reportType.charAt(0).toUpperCase() + reportType.slice(1)} report generated!`);
     } catch (err) {

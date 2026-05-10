@@ -417,6 +417,16 @@ export default function SettingsPage() {
           const u = users.find(u => u.id === uid);
           const current = u?.assignedDepartments || [];
           await updateUserProfile(uid, { assignedDepartments: current.filter(d => d !== editingDept.id) });
+          createNotification({
+            type: 'department_removed',
+            title: 'Department Access Removed',
+            message: `You have been removed from the "${form.name}" department.`,
+            recipientId: uid,
+            triggeredBy: userProfile?.uid,
+            triggeredByName: userProfile?.displayName || userProfile?.email,
+            departmentId: editingDept.id,
+            departmentName: form.name,
+          }).catch(console.error);
         }
       }
     } else {
@@ -456,9 +466,32 @@ export default function SettingsPage() {
 
   const handleDeleteDept = async (id) => {
     if (!confirm('Delete this department? This cannot be undone.')) return;
+    const dept = departments.find(d => d.id === id);
     await deleteDepartment(id);
     setDepartments(p => p.filter(d => d.id !== id));
     toast.success('Department deleted');
+    // Notify each dept member
+    for (const uid of dept?.assignedUsers || []) {
+      createNotification({
+        type: 'department_deleted',
+        title: 'Department Removed',
+        message: `The "${dept.name}" department has been deleted from the platform.`,
+        recipientId: uid,
+        triggeredBy: userProfile?.uid,
+        triggeredByName: userProfile?.displayName || userProfile?.email,
+        departmentName: dept.name,
+      }).catch(console.error);
+    }
+    // Notify admins
+    createNotification({
+      type: 'department_deleted',
+      title: 'Department Deleted',
+      message: `"${dept?.name}" department has been permanently removed.`,
+      recipientId: 'admins',
+      triggeredBy: userProfile?.uid,
+      triggeredByName: userProfile?.displayName || userProfile?.email,
+      departmentName: dept?.name,
+    }).catch(console.error);
   };
 
   const handleRoleChange = async (uid, role) => {
@@ -469,6 +502,14 @@ export default function SettingsPage() {
     await updateUserProfile(uid, { role });
     setUsers(p => p.map(u => u.id === uid ? { ...u, role } : u));
     toast.success('Role updated');
+    createNotification({
+      type: 'role_changed',
+      title: 'Your Role Has Been Updated',
+      message: `Your account role has been changed to "${role}".`,
+      recipientId: uid,
+      triggeredBy: userProfile?.uid,
+      triggeredByName: userProfile?.displayName || userProfile?.email,
+    }).catch(console.error);
   };
 
   const handleDeleteUser = async (uid) => {

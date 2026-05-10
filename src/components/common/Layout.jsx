@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import Sidebar from './Sidebar';
+import NotificationToasts from './NotificationToasts';
 import { Menu, Dna } from 'lucide-react';
 
 export default function Layout() {
@@ -23,6 +24,7 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+      <NotificationToasts />
 
       {/* Mobile backdrop overlay */}
       {sidebarOpen && (
