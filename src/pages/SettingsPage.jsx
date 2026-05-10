@@ -9,7 +9,7 @@ import { generateDepartmentPrompt } from '../services/openai';
 import {
   Settings, Plus, Trash2, Edit2, Users, Bot, Database, Save,
   Loader2, X, Shield, UserPlus, ChevronDown, ChevronUp,
-  Sparkles, Send, Key, Globe, FileText, Check,
+  Sparkles, Send, Key, Globe, FileText, Check, Eye, EyeOff,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -354,6 +354,13 @@ export default function SettingsPage() {
   const [editingDept, setEditingDept] = useState(null);
   const [expandedDept, setExpandedDept] = useState(null);
 
+  // User creation state
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [createForm, setCreateForm] = useState({ name: '', email: '', password: '', role: 'user' });
+  const [showCreatePwd, setShowCreatePwd] = useState(false);
+  const [visiblePasswords, setVisiblePasswords] = useState({});
+
   if (!isAdmin) return <Navigate to="/dashboard" replace />;
 
   useEffect(() => {
@@ -429,6 +436,63 @@ export default function SettingsPage() {
     await deleteUser(uid);
     setUsers(p => p.filter(u => u.id !== uid));
     toast.success('User removed from database');
+  };
+
+  const handleCreateUser = async () => {
+    const { name, email, password, role } = createForm;
+    if (!name || !email || !password) { toast.error('All fields are required'); return; }
+    if (password.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+    setCreatingUser(true);
+    try {
+      const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+      // Create user via REST API (does not sign out the current admin)
+      const signUpRes = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, returnSecureToken: true }),
+        }
+      );
+      const signUpData = await signUpRes.json();
+      if (signUpData.error) throw new Error(signUpData.error.message);
+
+      const { localId: uid, idToken } = signUpData;
+
+      // Set display name
+      await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:update?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken, displayName: name }),
+        }
+      );
+
+      // Save profile to Firestore (password stored for superadmin visibility)
+      const { createUserProfile } = await import('../services/firestore');
+      const newProfile = {
+        uid,
+        email,
+        displayName: name,
+        role,
+        assignedDepartments: [],
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        createdBy: userProfile?.uid,
+        _password: password,
+      };
+      await createUserProfile(uid, newProfile);
+
+      setUsers(p => [...p, { id: uid, ...newProfile }]);
+      setShowCreateUser(false);
+      setCreateForm({ name: '', email: '', password: '', role: 'user' });
+      toast.success(`User "${name}" created successfully!`);
+    } catch (e) {
+      toast.error(e.message || 'Failed to create user');
+    } finally {
+      setCreatingUser(false);
+    }
   };
 
   return (
@@ -582,62 +646,175 @@ export default function SettingsPage() {
         </div>
       ) : (
         /* ─── USERS TAB ─── */
-        <div className="space-y-3">
-          {users.map(u => (
-            <div key={u.id} className="glass-card rounded-2xl p-5 flex items-center gap-4">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-                style={{ background: 'linear-gradient(135deg, #3b82f6, #06b6d4)' }}>
-                {u.displayName?.[0]?.toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-white font-medium text-sm">{u.displayName}</p>
-                  {u.role === 'superadmin' && <Shield size={12} className="text-yellow-400" />}
+        <div>
+          {/* Header row with Create User button */}
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-slate-400">{users.length} user{users.length !== 1 ? 's' : ''}</p>
+            {isAdmin && (
+              <button
+                onClick={() => setShowCreateUser(v => !v)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white gradient-btn"
+              >
+                <UserPlus size={15} /> Create User
+              </button>
+            )}
+          </div>
+
+          {/* Create User Form */}
+          {showCreateUser && (
+            <div className="glass rounded-2xl p-5 mb-5">
+              <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                <UserPlus size={15} className="text-blue-400" /> New User
+              </h3>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="text-xs text-slate-400 mb-1.5 block">Full Name *</label>
+                  <input
+                    className="w-full px-3 py-2.5 rounded-xl text-white text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}
+                    placeholder="John Doe"
+                    value={createForm.name}
+                    onChange={e => setCreateForm(p => ({ ...p, name: e.target.value }))}
+                  />
                 </div>
-                <p className="text-slate-500 text-xs">{u.email}</p>
-                <p className="text-slate-600 text-xs mt-0.5">
-                  Departments: {u.assignedDepartments?.length || 0}
-                </p>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1.5 block">Email *</label>
+                  <input
+                    type="email"
+                    className="w-full px-3 py-2.5 rounded-xl text-white text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}
+                    placeholder="john@company.com"
+                    value={createForm.email}
+                    onChange={e => setCreateForm(p => ({ ...p, email: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1.5 block">Password *</label>
+                  <div className="relative">
+                    <input
+                      type={showCreatePwd ? 'text' : 'password'}
+                      className="w-full px-3 py-2.5 pr-10 rounded-xl text-white text-sm outline-none"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}
+                      placeholder="Min. 6 characters"
+                      value={createForm.password}
+                      onChange={e => setCreateForm(p => ({ ...p, password: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCreatePwd(v => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                    >
+                      {showCreatePwd ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1.5 block">Role</label>
+                  <select
+                    className="w-full px-3 py-2.5 rounded-xl text-white text-sm outline-none"
+                    style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}
+                    value={createForm.role}
+                    onChange={e => setCreateForm(p => ({ ...p, role: e.target.value }))}
+                  >
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                    {isSuperAdmin && <option value="superadmin">Super Admin</option>}
+                  </select>
+                </div>
               </div>
-
-              {/* Role selector */}
-              {isSuperAdmin && u.role !== 'superadmin' && (
-                <select
-                  value={u.role}
-                  onChange={e => handleRoleChange(u.id, e.target.value)}
-                  className="px-3 py-1.5 rounded-lg text-xs text-white outline-none"
-                  style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)' }}
-                >
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
-                </select>
-              )}
-
-              {u.role === 'superadmin' && (
-                <span className="px-2 py-1 rounded-lg text-xs text-yellow-400"
-                  style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.2)' }}>
-                  Super Admin
-                </span>
-              )}
-
-              {isSuperAdmin && u.id !== userProfile?.uid && (
+              <div className="flex gap-2 justify-end">
                 <button
-                  onClick={() => handleDeleteUser(u.id)}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-red-400 transition-colors"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                  onClick={() => { setShowCreateUser(false); setCreateForm({ name: '', email: '', password: '', role: 'user' }); }}
+                  className="px-4 py-2 rounded-xl text-sm text-slate-400 hover:text-white transition-colors"
+                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
                 >
-                  <Trash2 size={14} />
+                  Cancel
                 </button>
-              )}
-            </div>
-          ))}
-
-          {users.length === 0 && (
-            <div className="text-center py-16">
-              <Users size={40} className="text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400">No users yet.</p>
+                <button
+                  onClick={handleCreateUser}
+                  disabled={creatingUser}
+                  className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white gradient-btn disabled:opacity-50"
+                >
+                  {creatingUser ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                  Create User
+                </button>
+              </div>
             </div>
           )}
+
+          {/* User list */}
+          <div className="space-y-3">
+            {users.map(u => (
+              <div key={u.id} className="glass-card rounded-2xl p-5 flex items-center gap-4">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                  style={{ background: 'linear-gradient(135deg, #3b82f6, #06b6d4)' }}>
+                  {u.displayName?.[0]?.toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-white font-medium text-sm">{u.displayName}</p>
+                    {u.role === 'superadmin' && <Shield size={12} className="text-yellow-400" />}
+                  </div>
+                  <p className="text-slate-500 text-xs">{u.email}</p>
+                  <p className="text-slate-600 text-xs mt-0.5">
+                    Departments: {u.assignedDepartments?.length || 0}
+                  </p>
+                  {/* Password visible only to superadmin */}
+                  {isSuperAdmin && u._password && (
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <Key size={10} className="text-slate-600" />
+                      <span className="text-xs font-mono text-slate-500">
+                        {visiblePasswords[u.id] ? u._password : '••••••••'}
+                      </span>
+                      <button
+                        onClick={() => setVisiblePasswords(p => ({ ...p, [u.id]: !p[u.id] }))}
+                        className="text-slate-600 hover:text-slate-400 transition-colors"
+                      >
+                        {visiblePasswords[u.id] ? <EyeOff size={10} /> : <Eye size={10} />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Role selector */}
+                {isSuperAdmin && u.role !== 'superadmin' && (
+                  <select
+                    value={u.role}
+                    onChange={e => handleRoleChange(u.id, e.target.value)}
+                    className="px-3 py-1.5 rounded-lg text-xs text-white outline-none"
+                    style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  >
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                )}
+
+                {u.role === 'superadmin' && (
+                  <span className="px-2 py-1 rounded-lg text-xs text-yellow-400"
+                    style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.2)' }}>
+                    Super Admin
+                  </span>
+                )}
+
+                {isSuperAdmin && u.id !== userProfile?.uid && (
+                  <button
+                    onClick={() => handleDeleteUser(u.id)}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:text-red-400 transition-colors"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+
+            {users.length === 0 && (
+              <div className="text-center py-16">
+                <Users size={40} className="text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400">No users yet. Create your first user above.</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
