@@ -215,20 +215,19 @@ function hasAccess(profile, deptId) {
 
 async function enterDept(ctx, dept, sess) {
   const history  = await getChatHistory(sess.uid, dept.id);
-  const lastUser = history.filter(m => m.role === 'user').pop();
-  const histNote = lastUser
-    ? `💬 Last: <i>"${lastUser.content.substring(0, 60)}${lastUser.content.length > 60 ? '…' : ''}"</i>`
-    : '💬 No previous conversation in this department.';
-
   const msgCount = history.filter(m => m.role === 'user').length;
-  const countNote = msgCount > 0 ? ` (${msgCount} messages)` : '';
+  const lastUser = history.filter(m => m.role === 'user').pop();
+
+  const histLine = msgCount > 0
+    ? `💬 ${msgCount} previous messages — Last: <i>"${lastUser.content.substring(0, 50)}…"</i>`
+    : `💬 No previous conversation here.`;
 
   await ctx.reply(
-    `✅ <b>${dept.name}</b>${dept.tag ? ` · <code>${dept.tag}</code>` : ''}${countNote}\n` +
-    `${dept.description ? `<i>${dept.description}</i>\n\n` : '\n'}` +
-    `${histNote}\n\n` +
-    `Ask me anything!\n` +
-    `/switch — change department  |  /help — commands`,
+    `✅ <b>${dept.name}</b>${dept.tag ? ` [${dept.tag}]` : ''}\n` +
+    `${dept.description ? `<i>${dept.description}</i>\n` : ''}` +
+    `${histLine}\n\n` +
+    `<b>Type your question ⬇️</b>\n` +
+    `/switch — change dept  ·  /logout — logout`,
     { parse_mode: 'HTML' }
   );
 }
@@ -236,31 +235,46 @@ async function enterDept(ctx, dept, sess) {
 // ─── Bot ──────────────────────────────────────────────────────────────────────
 const bot = new Telegraf(BOT_TOKEN);
 
-// /start ── show department list
+// /start
 bot.command('start', async (ctx) => {
   const tid      = String(ctx.from.id);
-  const sess     = await getSession(tid);
+  let   sess     = await getSession(tid);
   const allDepts = await getDepartments();
 
   if (allDepts.length === 0)
     return ctx.reply('No departments available. Please contact your admin.');
 
+  // Validate existing session — if uid present but profile missing, wipe it
   if (sess?.uid) {
-    const profile  = await getUserProfile(sess.uid);
-    const depts    = getAccessible(allDepts, profile);
-    const currName = allDepts.find(d => d.id === sess.currentDeptId)?.name;
+    const profile = await getUserProfile(sess.uid);
+    if (!profile) { await clearSession(tid); sess = null; }
+  }
+
+  // ── Already logged in AND already in a department → stay there
+  if (sess?.uid && sess?.currentDeptId) {
+    const dept = allDepts.find(d => d.id === sess.currentDeptId);
     return ctx.reply(
-      `👋 <b>Welcome back, ${sess.displayName}!</b>\n` +
-      (currName ? `Current: <b>${currName}</b>\n\n` : '\n') +
-      `Select a department:`,
+      `✅ <b>${sess.displayName}</b> — <b>${dept?.name || sess.currentDeptId}</b>\n\n` +
+      `Type your question below ⬇️\n\n` +
+      `/switch — change department\n/logout — logout`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  // ── Logged in but no department picked yet
+  if (sess?.uid) {
+    const profile = await getUserProfile(sess.uid);
+    const depts   = getAccessible(allDepts, profile);
+    return ctx.reply(
+      `👋 <b>Welcome back, ${sess.displayName}!</b>\n\nSelect a department:`,
       { parse_mode: 'HTML', reply_markup: deptKeyboard(depts) }
     );
   }
 
-  // Not logged in — show all depts, clear any stale state
+  // ── Not logged in → show all departments
   await mergeSession(tid, { step: null, pendingDeptId: null, pendingEmail: null });
   return ctx.reply(
-    `🤖 <b>BioPharma CRA Bot</b>\n\nWelcome! Select your department to continue:`,
+    `🤖 <b>BioPharma CRA Bot</b>\n\nWelcome! Select your department:`,
     { parse_mode: 'HTML', reply_markup: deptKeyboard(allDepts) }
   );
 });
