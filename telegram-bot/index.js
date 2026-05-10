@@ -438,8 +438,8 @@ async function main() {
   // Auto-detect new department tokens every 5 minutes
   setInterval(refreshBots, 5 * 60 * 1000);
 
-  process.once('SIGINT',  () => { for (const { bot } of activeBots.values()) bot.stop('SIGINT');  });
-  process.once('SIGTERM', () => { for (const { bot } of activeBots.values()) bot.stop('SIGTERM'); });
+  process.once('SIGINT',  () => { for (const { bot } of activeBots.values()) { try { bot.stop('SIGINT');  } catch {} } process.exit(0); });
+  process.once('SIGTERM', () => { for (const { bot } of activeBots.values()) { try { bot.stop('SIGTERM'); } catch {} } process.exit(0); });
 }
 
 main().catch(err => { console.error('❌ Startup failed:', err.message); process.exit(1); });
