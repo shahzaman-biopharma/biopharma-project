@@ -10,7 +10,7 @@ import { generateDepartmentPrompt } from '../services/openai';
 import {
   Settings, Plus, Trash2, Edit2, Users, Bot, Database, Save,
   Loader2, X, Shield, UserPlus, ChevronDown, ChevronUp,
-  Sparkles, Send, Key, Globe, FileText, Check, Eye, EyeOff,
+  Sparkles, Key, Globe, FileText, Check, Eye, EyeOff,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -54,7 +54,6 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
     businessContext: dept?.businessContext || '',
     systemPrompt: dept?.systemPrompt || '',
     dataSources: dept?.dataSources || [],
-    telegram: dept?.telegram || { botToken: '', botUsername: '', webhookUrl: '' },
     assignedUsers: dept?.assignedUsers || [],
   });
   const [generatingPrompt, setGeneratingPrompt] = useState(false);
@@ -63,8 +62,6 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
   const [showAddSource, setShowAddSource] = useState(false);
 
   const set = (field) => (e) => setForm(p => ({ ...p, [field]: e.target.value }));
-  const setNested = (parent, field) => (e) =>
-    setForm(p => ({ ...p, [parent]: { ...p[parent], [field]: e.target.value } }));
 
   const handleGeneratePrompt = async () => {
     if (!form.name || !form.description) {
@@ -257,62 +254,6 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
             </div>
           </div>
         )}
-      </section>
-
-      {/* Telegram Bot */}
-      <section>
-        <h3 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
-          <Send size={14} className="text-blue-400" /> Telegram Bot Setup
-        </h3>
-
-        {/* Step guide */}
-        <div className="rounded-xl p-4 mb-4 space-y-2"
-          style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
-          <p className="text-blue-400 text-xs font-semibold mb-2">Setup Steps:</p>
-          <p className="text-slate-400 text-xs">1. Telegram mein <span className="text-white font-mono">@BotFather</span> ko message karein</p>
-          <p className="text-slate-400 text-xs">2. <span className="text-white font-mono">/newbot</span> → name dein → token copy karein</p>
-          <p className="text-slate-400 text-xs">3. Token neeche paste karein aur Save karein</p>
-          <p className="text-slate-400 text-xs">4. Firebase deploy ke baad Webhook URL set hogi — copy karke BotFather mein <span className="text-white font-mono">/setwebhook</span> karein</p>
-        </div>
-
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-slate-400 mb-1.5 block">Bot Token (from @BotFather)</label>
-            <input className={inputCls} style={inputStyle} value={form.telegram.botToken}
-              onChange={setNested('telegram', 'botToken')}
-              placeholder="7xxxxxxxxxx:AAAAAAAAAAAAA..." type="password" />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-slate-400 mb-1.5 block">Bot Username</label>
-              <input className={inputCls} style={inputStyle} value={form.telegram.botUsername}
-                onChange={setNested('telegram', 'botUsername')} placeholder="@biopharma_dvl_bot" />
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1.5 block">Webhook URL (after deploy)</label>
-              <input className={inputCls} style={inputStyle} value={form.telegram.webhookUrl}
-                onChange={setNested('telegram', 'webhookUrl')}
-                placeholder="https://us-central1-biopharma-a07e0.cloudfunctions.net/telegramWebhook?token=..." />
-            </div>
-          </div>
-
-          {/* Auto webhook URL hint */}
-          {form.telegram.botToken && form.telegram.webhookUrl && (
-            <div className="rounded-lg p-3" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}>
-              <p className="text-xs text-green-400 font-medium mb-1">✅ Webhook URL ready — set this in Telegram:</p>
-              <code className="text-xs text-slate-300 break-all select-all block mb-2">
-                {form.telegram.webhookUrl}
-              </code>
-              <p className="text-xs text-slate-500">Browser mein kholo: <code className="text-slate-400">https://api.telegram.org/bot{'{TOKEN}'}/setWebhook?url={'{WEBHOOK_URL}'}</code></p>
-            </div>
-          )}
-          {form.telegram.botToken && !form.telegram.webhookUrl && (
-            <div className="rounded-lg p-3" style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)' }}>
-              <p className="text-xs text-yellow-400 font-medium">⚠️ Vercel deploy ke baad apna URL yahan paste karein</p>
-              <p className="text-xs text-slate-500 mt-1">Format: <code className="text-slate-400">https://your-app.vercel.app/api/telegram?token=BOT_TOKEN</code></p>
-            </div>
-          )}
-        </div>
       </section>
 
       {/* Assign Users */}
@@ -694,7 +635,7 @@ export default function SettingsPage() {
                       </div>
                       <div>
                         <p className="text-slate-500 mb-1">Telegram Bot</p>
-                        <p className="text-slate-300">{dept.telegram?.botUsername || 'Not configured'}</p>
+                        <p className="text-green-400 text-xs">✓ Central bot — auto connected</p>
                       </div>
                       <div className="col-span-2">
                         <p className="text-slate-500 mb-1">System Prompt Preview</p>

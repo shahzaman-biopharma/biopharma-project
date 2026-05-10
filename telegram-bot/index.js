@@ -145,9 +145,32 @@ async function gptReply(dept, history, userText) {
     } catch { /* skip failed source */ }
   }
 
+  const FORMAT = `
+
+TELEGRAM FORMATTING RULES (hamesha follow karein):
+- Bold ke liye: <b>text</b> (important terms, numbers, key findings)
+- Italic ke liye: <i>text</i>
+- Code/value ke liye: <code>text</code>
+- Bullet points ke liye • use karein (dash nahi)
+- Section headings ke liye: <b>━━ HEADING ━━</b>
+- Tables/comparisons ke liye <pre> block:
+
+<pre>Metric          Value      Status
+────────────────────────────────
+Item 1          100        ✅
+Item 2          50         ⚠️
+Item 3          0          ❌</pre>
+
+- ✅ = complete/verified/good
+- ❌ = missing/failed/critical
+- ⚠️ = pending/review/partial
+- Jawab mukhtasar aur clear rakho — yeh chat hai, report nahi
+- User ki language mein jawab do (Urdu ya English)
+`;
+
   const systemPrompt = dept.systemPrompt
-    ? `${dept.systemPrompt}\n\nIMPORTANT: Plain text sirf use karein. Koi markdown formatting nahi (* # ** etc).\n\n--- DATA ---\n${ctx}`
-    : `Aap ${dept.name} department ke AI assistant hain. Professional aur mukhtasar jawab dein. Plain text use karein, koi markdown nahi.\n\n--- DATA ---\n${ctx}`;
+    ? `${dept.systemPrompt}\n\n--- DATA ---\n${ctx}${FORMAT}`
+    : `Aap ${dept.name} department ke AI assistant hain. Professional aur mukhtasar jawab dein.\n\n--- DATA ---\n${ctx}${FORMAT}`;
 
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -176,7 +199,12 @@ async function safeSend(ctx, text) {
     ? [text]
     : (text.match(/[\s\S]{1,4000}/g) || [text]);
   for (const chunk of chunks) {
-    await ctx.reply(chunk);
+    try {
+      await ctx.reply(chunk, { parse_mode: 'HTML' });
+    } catch {
+      // Fallback: strip HTML tags and send plain text
+      await ctx.reply(chunk.replace(/<[^>]*>/g, ''));
+    }
   }
 }
 
