@@ -11,7 +11,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { login, signup } = useAuth();
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const { login, signup, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -52,6 +53,19 @@ export default function LoginPage() {
       toast.error(msg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setGoogleLoading(true);
+    try {
+      await loginWithGoogle();
+      toast.success('Welcome!');
+      navigate('/dashboard');
+    } catch (err) {
+      toast.error(err.message || 'Google sign-in failed');
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -138,6 +152,39 @@ export default function LoginPage() {
               {loading ? <><Loader2 size={18} className="animate-spin" /> Signing in...</> : 'Sign In'}
             </button>
           </form>
+
+          {/* Divider */}
+          <div className="relative my-5">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t" style={{ borderColor: 'rgba(255,255,255,0.1)' }} />
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="px-3 text-slate-500" style={{ background: 'rgba(13,26,53,0.95)' }}>or</span>
+            </div>
+          </div>
+
+          {/* Google Sign-In */}
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={loading || googleLoading}
+            className="w-full py-3 rounded-xl font-medium text-slate-200 flex items-center justify-center gap-3 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }}
+            onMouseOver={e => { if (!loading && !googleLoading) e.currentTarget.style.background = 'rgba(255,255,255,0.11)'; }}
+            onMouseOut={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+          >
+            {googleLoading ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M17.64 9.2c0-.74-.06-1.28-.19-1.84H9v3.34h4.96c-.1.83-.64 2.08-1.84 2.92l2.84 2.2c1.7-1.57 2.68-3.88 2.68-6.62z" fill="#4285F4"/>
+                <path d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.84-2.2c-.76.53-1.78.9-3.12.9-2.38 0-4.4-1.57-5.12-3.74L.97 13.04C2.45 15.98 5.48 18 9 18z" fill="#34A853"/>
+                <path d="M3.88 10.78A5.54 5.54 0 0 1 3.58 9c0-.62.11-1.22.29-1.78L.96 4.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.04l2.92-2.26z" fill="#FBBC05"/>
+                <path d="M9 3.48c1.69 0 2.83.73 3.48 1.34l2.54-2.54C13.46.89 11.43 0 9 0 5.48 0 2.44 2.02.96 4.96l2.91 2.26C4.6 5.05 6.62 3.48 9 3.48z" fill="#EA4335"/>
+              </svg>
+            )}
+            Continue with Google
+          </button>
 
           <p className="text-center mt-6 text-slate-400 text-sm">
             Don't have an account?{' '}

@@ -7,9 +7,33 @@ import {
   updateProfile,
   setPersistence,
   browserLocalPersistence,
+  signInWithPopup,
+  linkWithPopup,
+  reauthenticateWithPopup,
+  GoogleAuthProvider,
 } from 'firebase/auth';
-import { auth } from '../services/firebase';
+import { auth, googleProvider } from '../services/firebase';
 import { createUserProfile, getUserProfile, createNotification } from '../services/firestore';
+
+// ─── Google token helpers (55-min session storage) ───────────────────────────
+const G_TOKEN_KEY = 'bp_g_token';
+
+function readStoredGoogleToken() {
+  try {
+    const s = sessionStorage.getItem(G_TOKEN_KEY);
+    if (!s) return null;
+    const { token, expiry } = JSON.parse(s);
+    if (Date.now() > expiry) { sessionStorage.removeItem(G_TOKEN_KEY); return null; }
+    return token;
+  } catch { return null; }
+}
+
+function persistGoogleToken(token) {
+  sessionStorage.setItem(G_TOKEN_KEY, JSON.stringify({
+    token,
+    expiry: Date.now() + 55 * 60 * 1000,
+  }));
+}
 
 const AuthContext = createContext(null);
 
@@ -19,6 +43,12 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [googleToken, setGoogleToken] = useState(readStoredGoogleToken);
+
+  const saveGoogleToken = (token) => {
+    persistGoogleToken(token);
+    setGoogleToken(token);
+  };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -52,6 +82,47 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     await setPersistence(auth, browserLocalPersistence);
     return signInWithEmailAndPassword(auth, email, password);
+  };
+
+  // Sign in with Google — also stores Google access token for Sheets API
+  const loginWithGoogle = async () => {
+    await setPersistence(auth, browserLocalPersistence);
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const cred = GoogleAuthProvider.credentialFromResult(result);
+      if (cred?.accessToken) saveGoogleToken(cred.accessToken);
+      return result;
+    } catch (err) {
+      if (err.code === 'auth/account-exists-with-different-credential') {
+        throw new Error(
+          'This email is already registered with email & password. ' +
+          'Sign in with email/password first, then connect Google in Settings → Google Sheets.'
+        );
+      }
+      throw err;
+    }
+  };
+
+  // For already-logged-in users: link Google to get Sheets access token without changing auth
+  const connectGoogleSheets = async () => {
+    const provider = new GoogleAuthProvider();
+    provider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
+    try {
+      const result = await linkWithPopup(auth.currentUser, provider);
+      const cred = GoogleAuthProvider.credentialFromResult(result);
+      if (cred?.accessToken) saveGoogleToken(cred.accessToken);
+      return true;
+    } catch (err) {
+      if (err.code === 'auth/provider-already-linked' || err.code === 'auth/credential-already-in-use') {
+        // Already linked — re-auth to get fresh token
+        const result = await reauthenticateWithPopup(auth.currentUser, provider);
+        const cred = GoogleAuthProvider.credentialFromResult(result);
+        if (cred?.accessToken) saveGoogleToken(cred.accessToken);
+        return true;
+      }
+      if (err.code === 'auth/popup-closed-by-user') return false;
+      throw err;
+    }
   };
 
   const signup = async (email, password, displayName) => {
@@ -96,6 +167,8 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user, userProfile, loading,
       login, signup, logout, refreshProfile,
+      loginWithGoogle, connectGoogleSheets,
+      googleToken,
       isSuperAdmin, isAdmin,
     }}>
       {!loading && children}
