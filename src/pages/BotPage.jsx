@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { subscribeToDepartment, getChatHistory, saveChatMessage, getGoogleSheetToken, getUserGoogleToken } from '../services/firestore';
+import { subscribeToDepartment } from '../services/firestore';
 import { chatWithBot, generateFileData } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
   ArrowLeft, Send, Bot, User, Loader2,
   Database, RefreshCw, Sparkles,
-  FileSpreadsheet, FileDown, Table2, BrainCircuit, Mic,
+  FileSpreadsheet, FileDown, Table2, Mic,
 } from 'lucide-react';
 import VoiceMode from '../components/common/VoiceMode';
 import toast from 'react-hot-toast';
@@ -254,89 +254,30 @@ function ChatMessage({ msg }) {
   );
 }
 
-// ─── Conversation memory window ──────────────────────────────────────────────
-const MEMORY_WINDOW = 10;
-
-// Strip all markdown tables, bullet-data blocks, and numbered data rows from
-// old assistant messages. The live DATA CONTEXT is the only source of facts —
-// history is kept only so the bot understands what was ASKED, not what was answered.
-function stripDataFromAssistantMsg(content) {
-  return content
-    // Remove markdown tables entirely
-    .replace(/^\|.+$/gm, '')
-    // Remove numbered list rows that look like data (e.g. "1. John | 10192 | ...")
-    .replace(/^\d+\.\s.{40,}$/gm, '')
-    // Remove bullet rows that look like data
-    .replace(/^[-*]\s.{60,}$/gm, '')
-    // Collapse excess blank lines
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-    // If still very long, keep first 400 chars
-    .slice(0, 400);
-}
-
-function buildApiMessages(allMessages) {
-  const filtered = allMessages.filter(m => m.role !== 'system');
-  const windowed = filtered.length > MEMORY_WINDOW
-    ? [filtered[0], ...filtered.slice(-(MEMORY_WINDOW - 1))]
-    : filtered;
-
-  return windowed.map((m, i) => {
-    if (m.role !== 'assistant') return { role: m.role, content: m.content };
-    // Keep the very last bot message as-is (follow-up context)
-    if (i === windowed.length - 1) return { role: 'assistant', content: m.content };
-    // All older bot messages: strip tables and data — bot will re-derive from live DATA CONTEXT
-    const stripped = stripDataFromAssistantMsg(m.content);
-    return { role: 'assistant', content: stripped || '[previous response — re-derive from DATA CONTEXT]' };
-  });
-}
-
 // ─── Live data fetcher ────────────────────────────────────────────────────────
-// Returns { context: string, anyTokenFailed: boolean }
-// anyTokenFailed=true means at least one Google Sheet fell back to public CSV
-// because the OAuth token is expired — user must reconnect in Settings.
-async function fetchDeptContext(dept, googleToken) {
+
+async function fetchDeptContext(dept) {
   let ctx = `Department: ${dept.name}\nDescription: ${dept.description}\n\n`;
-  if (!dept?.dataSources?.length) return { context: ctx, anyTokenFailed: false };
+  if (!dept?.dataSources?.length) return ctx;
 
-  let sharedToken = googleToken;
-  if (!sharedToken) {
-    try {
-      const stored = await getGoogleSheetToken();
-      if (stored?.connected && stored.token && Date.now() < stored.expiry) sharedToken = stored.token;
-    } catch {}
-  }
-
-  let anyTokenFailed = false;
   const sheetIndex = [];
-
   for (const src of dept.dataSources) {
     try {
       if ((src.type === 'googlesheet' || src.type === 'onedrive') && src.url) {
-        let tokenForSrc = sharedToken;
-        if (src.type === 'googlesheet' && src.addedByUid) {
-          try {
-            const userToken = await getUserGoogleToken(src.addedByUid);
-            if (userToken?.token && Date.now() < userToken.expiry) tokenForSrc = userToken.token;
-          } catch {}
-        }
-        const result = await fetchGoogleSheetData(src.url, tokenForSrc);
+        const result = await fetchGoogleSheetData(src.url);
         ctx += `\n--- Data Source: "${src.name}" ---\n${result.text}\n`;
         if (result.sheetNames?.length) {
           sheetIndex.push(`"${src.name}": ${result.sheetNames.length} tab(s) — [${result.sheetNames.join(', ')}]`);
         }
-        if (result.tokenWorked === false) {
-          anyTokenFailed = true;
-          ctx += `\n⚠ WARNING for "${src.name}": Google OAuth token has expired. Only the FIRST TAB is loaded via public access. The other tabs are NOT available until the SuperAdmin reconnects Google in Settings → Departments → Refresh.\n`;
-        }
       } else if (src.type === 'text' && src.content) {
         ctx += `\n--- Data Source: "${src.name}" ---\n${src.content}\n`;
       }
-    } catch {}
+    } catch (err) {
+      ctx += `\n--- Data Source: "${src.name}" ---\nError loading: ${err.message}\n`;
+    }
   }
-
   if (sheetIndex.length) ctx += `\n\n--- SHEET INDEX ---\n${sheetIndex.join('\n')}\n`;
-  return { context: ctx, anyTokenFailed };
+  return ctx;
 }
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -345,17 +286,15 @@ export default function BotPage() {
   const { deptId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, googleToken } = useAuth();
+  const { user } = useAuth();
 
   const [department, setDepartment] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
-  const [dataContext, setDataContext] = useState('');
   const [dataLoaded, setDataLoaded] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [tokenWarning, setTokenWarning] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
 
   const bottomRef = useRef(null);
@@ -373,20 +312,14 @@ export default function BotPage() {
       if (!dept) { navigate('/dashboard'); return; }
       setDepartment(dept);
 
-      // Load chat history only once (on first snapshot)
       if (!historyLoaded) {
         historyLoaded = true;
         try {
-          const history = await getChatHistory(user.uid, deptId);
-          if (history.length > 0) {
-            setMessages(history);
-          } else {
-            setMessages([{
-              role: 'assistant',
-              content: `Hello! I'm the **${dept.name}** AI assistant.\n\nI can help you analyze data, answer questions, and generate downloadable reports.\n\nTip: Ask me to "generate an Excel report" or "create a PDF summary" and I'll build a formatted file for you!\n\nHow can I help you today?`,
-              timestamp: Date.now(),
-            }]);
-          }
+          setMessages([{
+            role: 'assistant',
+            content: `Hello! I'm the **${dept.name}** AI assistant.\n\nI can help you analyze data, answer questions, and generate downloadable reports.\n\nTip: Ask me to "generate an Excel report" or "create a PDF summary" and I'll build a formatted file for you!\n\nHow can I help you today?`,
+            timestamp: Date.now(),
+          }]);
           await loadDataSources(dept);
         } catch {
           toast.error('Failed to load bot');
@@ -394,8 +327,6 @@ export default function BotPage() {
           setPageLoading(false);
         }
       }
-      // On subsequent snapshots (admin updated dept): dataLoaded badge refreshes,
-      // next query auto-fetches from new data source (fetchDeptContext uses dept state)
     });
 
     return () => unsub();
@@ -413,9 +344,7 @@ export default function BotPage() {
 
   const loadDataSources = async (dept) => {
     if (!dept.dataSources?.length) { setDataLoaded(true); return; }
-    const { context: ctx, anyTokenFailed } = await fetchDeptContext(dept, googleToken);
-    if (anyTokenFailed) setTokenWarning(true);
-    setDataContext(ctx);
+    await fetchDeptContext(dept);
     setDataLoaded(true);
   };
 
@@ -430,62 +359,35 @@ export default function BotPage() {
     setInput('');
 
     const userMessage = { role: 'user', content: userMsg, timestamp: Date.now() };
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
+    setMessages(prev => [...prev, userMessage]);
     setLoading(true);
 
     try {
-      const apiMessages = buildApiMessages(newMessages);
       const wantsFile = isFileRequest(userMsg);
 
-      // Fetch live data from the sheet — always fresh, never cached
+      // Fetch live data — always fresh on every query
       setSyncing(true);
-      const { context: freshContext, anyTokenFailed } = await fetchDeptContext(dept, googleToken);
+      const freshContext = await fetchDeptContext(dept);
       setSyncing(false);
-      setDataContext(freshContext);
-      if (anyTokenFailed) {
-        setTokenWarning(true);
-        toast('Google token expired — only first tab accessible. Reconnect in Settings.', { icon: '⚠️', duration: 7000 });
-      } else {
-        setTokenWarning(false);
-      }
+
+      const systemPrompt = dept.systemPrompt || `You are the AI assistant for ${dept.name}.`;
 
       if (wantsFile) {
         const [reply, fileData] = await Promise.all([
-          chatWithBot({
-            systemPrompt: dept.systemPrompt || `You are the AI assistant for ${dept.name}.`,
-            messages: apiMessages,
-            dataContext: freshContext,
-          }),
+          chatWithBot({ systemPrompt, userMessage: userMsg, dataContext: freshContext }),
           generateFileData({
             userRequest: userMsg,
             dataContext: freshContext || `Department: ${dept.name}\nDescription: ${dept.description}`,
             departmentName: dept.name,
           }).catch(() => null),
         ]);
-
-        const botMessage = {
-          role: 'assistant',
-          content: reply,
-          timestamp: Date.now(),
+        setMessages(prev => [...prev, {
+          role: 'assistant', content: reply, timestamp: Date.now(),
           fileData: fileData || undefined,
-        };
-        const finalMessages = [...newMessages, botMessage];
-        setMessages(finalMessages);
-        await saveChatMessage(user.uid, deptId, finalMessages.map(m => {
-          const { fileData: _, ...rest } = m;
-          return rest;
-        }));
+        }]);
       } else {
-        const reply = await chatWithBot({
-          systemPrompt: dept.systemPrompt || `You are the AI assistant for ${dept.name}.`,
-          messages: apiMessages,
-          dataContext: freshContext,
-        });
-        const botMessage = { role: 'assistant', content: reply, timestamp: Date.now() };
-        const finalMessages = [...newMessages, botMessage];
-        setMessages(finalMessages);
-        await saveChatMessage(user.uid, deptId, finalMessages);
+        const reply = await chatWithBot({ systemPrompt, userMessage: userMsg, dataContext: freshContext });
+        setMessages(prev => [...prev, { role: 'assistant', content: reply, timestamp: Date.now() }]);
       }
     } catch (err) {
       setSyncing(false);
@@ -502,7 +404,7 @@ export default function BotPage() {
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [input, messages, loading, googleToken, user.uid, deptId]);
+  }, [input, loading]);
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -511,27 +413,22 @@ export default function BotPage() {
     }
   };
 
-  const clearChat = async () => {
-    const welcome = [{
+  const clearChat = () => {
+    setMessages([{
       role: 'assistant',
       content: `Chat cleared. Hello again! I'm your ${departmentRef.current?.name} assistant. How can I help you?`,
       timestamp: Date.now(),
-    }];
-    setMessages(welcome);
-    await saveChatMessage(user.uid, deptId, welcome);
+    }]);
     toast.success('Chat cleared');
   };
 
-  const handleVoiceMessage = useCallback(async (userText, botText) => {
-    const userMsg = { role: 'user', content: userText, timestamp: Date.now() };
-    const botMsg  = { role: 'assistant', content: botText, timestamp: Date.now() };
-    const newMessages = [...messages, userMsg, botMsg];
-    setMessages(newMessages);
-    await saveChatMessage(user.uid, deptId, newMessages.map(m => {
-      const { fileData: _, ...rest } = m;
-      return rest;
-    }));
-  }, [messages, user.uid, deptId]);
+  const handleVoiceMessage = useCallback((userText, botText) => {
+    setMessages(prev => [
+      ...prev,
+      { role: 'user', content: userText, timestamp: Date.now() },
+      { role: 'assistant', content: botText, timestamp: Date.now() },
+    ]);
+  }, []);
 
   if (pageLoading) {
     return (
@@ -572,10 +469,6 @@ export default function BotPage() {
           </div>
         </div>
 
-        <div className="bp-header-badge" title="Bot remembers the last 10 messages in this conversation">
-          <BrainCircuit size={11} color="#a78bfa" />
-          <span className="bp-memory-label">Mem ×10</span>
-        </div>
         <div className="bp-header-badge">
           <FileSpreadsheet size={11} color="#60a5fa" />
           PDF / Excel
@@ -593,43 +486,10 @@ export default function BotPage() {
         </button>
       </div>
 
-      {/* ── Token expiry warning banner ── */}
-      {tokenWarning && (
-        <div style={{
-          background: 'rgba(234,179,8,0.12)',
-          borderBottom: '1px solid rgba(234,179,8,0.25)',
-          padding: '8px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          fontSize: 12,
-        }}>
-          <span style={{ color: '#fbbf24', flexShrink: 0 }}>⚠</span>
-          <span style={{ color: '#fde68a', flex: 1 }}>
-            Google token expired — only first sheet tab is accessible. SuperAdmin must
-            <button
-              onClick={() => navigate('/settings')}
-              style={{ color: '#fbbf24', textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px', fontSize: 12 }}
-            >
-              reconnect Google in Settings
-            </button>
-            to restore full access.
-          </span>
-          <button onClick={() => setTokenWarning(false)} style={{ color: '#92400e', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, fontSize: 14 }}>✕</button>
-        </div>
-      )}
-
       {/* ── Messages ── */}
       <div className="bp-messages">
         {messages.map((msg, i) => (
           <div key={i}>
-            {/* Show memory boundary marker when sliding window begins */}
-            {i === messages.length - MEMORY_WINDOW && messages.length > MEMORY_WINDOW + 1 && (
-              <div className="bp-memory-divider">
-                <BrainCircuit size={11} />
-                <span>Bot remembers from here (last {MEMORY_WINDOW} messages)</span>
-              </div>
-            )}
             <ChatMessage msg={msg} />
           </div>
         ))}
@@ -682,10 +542,7 @@ export default function BotPage() {
         <VoiceMode
           department={department}
           messages={messages}
-          getDataContext={async () => {
-            const { context } = await fetchDeptContext(departmentRef.current, googleToken);
-            return context;
-          }}
+          getDataContext={() => fetchDeptContext(departmentRef.current)}
           onClose={() => setVoiceMode(false)}
           onVoiceMessage={handleVoiceMessage}
         />

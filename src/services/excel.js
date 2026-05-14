@@ -1,38 +1,6 @@
 import * as XLSX from 'xlsx';
 
-// ─── OneDrive / SharePoint support ───────────────────────────────────────────
-
-function isOneDriveUrl(url) {
-  return /1drv\.ms|onedrive\.live\.com|sharepoint\.com/i.test(url);
-}
-
-async function parseExcelBlob(blob) {
-  const arrayBuffer = await blob.arrayBuffer();
-  const data = new Uint8Array(arrayBuffer);
-  const workbook = XLSX.read(data, { type: 'array' });
-  const sheets = {};
-  workbook.SheetNames.forEach(name => {
-    const ws = workbook.Sheets[name];
-    sheets[name] = XLSX.utils.sheet_to_json(ws, { header: 1 });
-  });
-  return {
-    text: sheetsToText(sheets),
-    sheetNames: workbook.SheetNames,
-    tokenWorked: true,
-  };
-}
-
-export async function fetchOneDriveData(url) {
-  const res = await fetch(`/api/fetch-excel?url=${encodeURIComponent(url)}`);
-  if (!res.ok) {
-    let msg = `OneDrive access failed (${res.status}).`;
-    try { const j = await res.json(); msg = j.error || msg; } catch {}
-    throw new Error(msg + ' Make sure the file is shared as "Anyone with the link".');
-  }
-  return parseExcelBlob(await res.blob());
-}
-
-// ─── Local Excel file ─────────────────────────────────────────────────────────
+// ─── Local Excel file upload ──────────────────────────────────────────────────
 
 export async function parseExcelFile(file) {
   return new Promise((resolve, reject) => {
@@ -43,13 +11,10 @@ export async function parseExcelFile(file) {
         const workbook = XLSX.read(data, { type: 'array' });
         const sheets = {};
         workbook.SheetNames.forEach(name => {
-          const ws = workbook.Sheets[name];
-          sheets[name] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
         });
         resolve(sheets);
-      } catch (err) {
-        reject(err);
-      }
+      } catch (err) { reject(err); }
     };
     reader.onerror = reject;
     reader.readAsArrayBuffer(file);
@@ -66,115 +31,53 @@ export function sheetsToText(sheets) {
     const dataRows = rows.slice(1);
     const limited = dataRows.slice(0, MAX_ROWS_PER_SHEET);
     const truncated = dataRows.length > MAX_ROWS_PER_SHEET;
-
     text += `\n=== Sheet: ${sheetName} ===\n`;
     text += `Columns (${headers.length}): ${headers.join(' | ')}\n`;
     text += `Total rows: ${dataRows.length}${truncated ? ` (showing first ${MAX_ROWS_PER_SHEET})` : ''}\n\n`;
     text += headers.join(' | ') + '\n';
     limited.forEach(row => {
-      const padded = headers.map((_, i) => String(row[i] ?? ''));
-      text += padded.join(' | ') + '\n';
+      text += headers.map((_, i) => String(row[i] ?? '')).join(' | ') + '\n';
     });
   });
   return text.trim();
 }
 
-// Read stored Google OAuth token (written by AuthContext — stored in localStorage)
-function getStoredGoogleToken() {
-  try {
-    const s = localStorage.getItem('bp_g_token');
-    if (!s) return null;
-    const { token, expiry } = JSON.parse(s);
-    if (Date.now() > expiry) { localStorage.removeItem('bp_g_token'); return null; }
-    return token;
-  } catch { return null; }
+// ─── OneDrive / SharePoint ────────────────────────────────────────────────────
+
+function isOneDriveUrl(url) {
+  return /1drv\.ms|onedrive\.live\.com|sharepoint\.com/i.test(url);
 }
 
-// Wrap sheet name in single quotes for proper Google Sheets API A1 notation
-// Handles sheet names with spaces, special chars (e.g. "Medical Records Tracker BIRC")
-function sheetRange(name) {
-  return "'" + name.replace(/'/g, "''") + "'";
+async function fetchOneDriveData(url) {
+  const res = await fetch(`/api/fetch-excel?url=${encodeURIComponent(url)}`);
+  if (!res.ok) {
+    let msg = `OneDrive access failed (${res.status}).`;
+    try { const j = await res.json(); msg = j.error || msg; } catch {}
+    throw new Error(msg + ' Make sure the file is shared as "Anyone with the link".');
+  }
+  const arrayBuffer = await (await res.blob()).arrayBuffer();
+  const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+  const sheets = {};
+  workbook.SheetNames.forEach(name => {
+    sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+  });
+  return { text: sheetsToText(sheets), sheetNames: workbook.SheetNames };
 }
 
-// Returns { text: string, sheetNames: string[], tokenWorked: bool }
-export async function fetchGoogleSheetData(url, externalToken = null) {
-  // Route OneDrive / SharePoint links to their own fetcher — no OAuth, no expiry
+// ─── Google Sheets via Service Account (server-side proxy, no token expiry) ──
+
+export async function fetchGoogleSheetData(url) {
   if (isOneDriveUrl(url)) return fetchOneDriveData(url);
 
   const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (!match) throw new Error('Invalid Google Sheets URL');
   const sheetId = match[1];
 
-  // ── Authenticated path — private sheets + ALL tabs ────────────────────────
-  const token = externalToken || getStoredGoogleToken();
-  if (token) {
-    try {
-      const metaRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (metaRes.ok) {
-        const meta = await metaRes.json();
-        const sheetNames = meta.sheets?.map(s => s.properties.title) || [];
-        const parts = [];
-        for (const name of sheetNames.slice(0, 10)) {
-          const valRes = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(sheetRange(name))}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          if (valRes.ok) {
-            const data = await valRes.json();
-            const rows = data.values || [];
-            if (rows.length) {
-              const headers = rows[0] || [];
-              const dataRows = rows.slice(1);
-              const limited = dataRows.slice(0, MAX_ROWS_PER_SHEET);
-              const truncated = dataRows.length > MAX_ROWS_PER_SHEET;
-              const lines = [
-                `=== Sheet: ${name} ===`,
-                `Columns (${headers.length}): ${headers.join(' | ')}`,
-                `Total rows: ${dataRows.length}${truncated ? ` (showing first ${MAX_ROWS_PER_SHEET})` : ''}`,
-                '',
-                headers.join(' | '),
-                ...limited.map(r => {
-                  const padded = headers.map((_, i) => String(r[i] ?? ''));
-                  return padded.join(' | ');
-                }),
-              ];
-              parts.push(lines.join('\n'));
-            }
-          }
-        }
-        if (parts.length) return { text: parts.join('\n\n'), sheetNames, tokenWorked: true };
-      }
-    } catch { /* fall through */ }
-  }
+  const res = await fetch(`/api/sheets?sheetId=${sheetId}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch sheet');
 
-  // ── Public CSV fallback (first sheet only — token missing or expired) ─────
-  const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
-  const res = await fetch(csvUrl);
-  if (!res.ok) {
-    throw new Error(
-      'Cannot access this Google Sheet. ' +
-      'Either make it public ("Anyone with the link") or connect Google in Settings → Departments.'
-    );
-  }
-  const rawCsv = await res.text();
-  const csvRows = rawCsv.trim().split('\n').map(line => line.split(','));
-  const csvHeaders = csvRows[0] || [];
-  const csvData = csvRows.slice(1).slice(0, MAX_ROWS_PER_SHEET);
-  const csvTrunc = csvRows.length - 1 > MAX_ROWS_PER_SHEET;
-  const text = [
-    '=== Sheet: Sheet1 (first tab only — Google token expired) ===',
-    `Columns (${csvHeaders.length}): ${csvHeaders.join(' | ')}`,
-    `Total rows: ${csvRows.length - 1}${csvTrunc ? ` (showing first ${MAX_ROWS_PER_SHEET})` : ''}`,
-    '',
-    csvHeaders.join(' | '),
-    ...csvData.map(r => csvHeaders.map((_, i) => String(r[i] ?? '')).join(' | ')),
-  ].join('\n');
-  return {
-    text,
-    sheetNames: ['Sheet1 (token expired — only first tab loaded)'],
-    tokenWorked: false,
-  };
+  const sheets = {};
+  (data.sheets || []).forEach(({ name, rows }) => { sheets[name] = rows; });
+  return { text: sheetsToText(sheets), sheetNames: data.sheetNames || [] };
 }

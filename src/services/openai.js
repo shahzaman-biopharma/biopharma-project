@@ -63,16 +63,6 @@ MULTI-SHEET DATA INTELLIGENCE:
 - You CAN filter, sort, sum, count, average, group-by, pivot on any column
 `;
 
-const MEMORY_INSTRUCTIONS = `
-CONVERSATION MEMORY:
-- Use history for question context and follow-up understanding only.
-- CRITICAL: For any factual data (names, numbers, dates, IDs, statuses) —
-  history is UNRELIABLE. Data changes in the live sheet are not reflected
-  in history. ALWAYS derive facts from current DATA CONTEXT, not history.
-- "jo tumne diya" / "woh data" / "pehle wali list" → re-derive from DATA CONTEXT,
-  do not copy from a previous bot message.
-- Never say "please provide the data again" if it was shared this session.
-`;
 
 const VOICE_INSTRUCTIONS = `
 VOICE MODE — STRICT RULES (override all formatting rules):
@@ -82,15 +72,13 @@ VOICE MODE — STRICT RULES (override all formatting rules):
 - TONE: Natural, warm, spoken-word style as if talking face to face
 `;
 
-export async function chatWithBot({ systemPrompt, messages, dataContext = '', voiceMode = false }) {
+export async function chatWithBot({ systemPrompt, userMessage, dataContext = '', voiceMode = false }) {
   const systemContent = [
-    // Accuracy rules go first — highest priority
     dataContext ? DATA_ACCURACY_RULES : '',
     systemPrompt,
     voiceMode ? VOICE_INSTRUCTIONS : FORMAT_INSTRUCTIONS,
-    MEMORY_INSTRUCTIONS,
     dataContext
-      ? `--- DATA CONTEXT (LIVE — fetched right now from connected sheets) ---\n${dataContext}`
+      ? `--- DATA CONTEXT (LIVE — fetched right now from connected source) ---\n${dataContext}`
       : '',
   ].filter(Boolean).join('\n\n');
 
@@ -98,7 +86,7 @@ export async function chatWithBot({ systemPrompt, messages, dataContext = '', vo
     model: 'gpt-4o-mini',
     messages: [
       { role: 'system', content: systemContent },
-      ...messages,
+      { role: 'user', content: userMessage },
     ],
     temperature: 0.2,
     max_tokens: 2500,

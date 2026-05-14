@@ -8,44 +8,10 @@ import {
   setPersistence,
   browserLocalPersistence,
   signInWithPopup,
-  linkWithPopup,
-  reauthenticateWithPopup,
   GoogleAuthProvider,
 } from 'firebase/auth';
 import { auth, googleProvider } from '../services/firebase';
-import { createUserProfile, getUserProfile, createNotification, saveGoogleSheetToken, clearGoogleSheetToken, saveUserGoogleToken } from '../services/firestore';
-
-// ─── Google token helpers (localStorage — survives browser restarts) ─────────
-const G_TOKEN_KEY = 'bp_g_token';
-const G_TOKEN_TTL = 55 * 60 * 1000; // 55 minutes (Google's OAuth token lifetime)
-
-function readStoredGoogleToken() {
-  try {
-    const s = localStorage.getItem(G_TOKEN_KEY);
-    if (!s) return null;
-    const { token, expiry } = JSON.parse(s);
-    if (Date.now() > expiry) { localStorage.removeItem(G_TOKEN_KEY); return null; }
-    return token;
-  } catch { return null; }
-}
-
-function persistGoogleToken(token) {
-  localStorage.setItem(G_TOKEN_KEY, JSON.stringify({
-    token,
-    expiry: Date.now() + G_TOKEN_TTL,
-  }));
-}
-
-function buildTokenDoc(token, user) {
-  return {
-    token,
-    expiry: Date.now() + G_TOKEN_TTL,
-    connectedBy: user.uid,
-    connectedByName: user.displayName || user.email,
-    connectedAt: new Date().toISOString(),
-    connected: true,
-  };
-}
+import { createUserProfile, getUserProfile, createNotification } from '../services/firestore';
 
 const AuthContext = createContext(null);
 
@@ -55,12 +21,6 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [googleToken, setGoogleToken] = useState(readStoredGoogleToken);
-
-  const saveGoogleToken = (token) => {
-    persistGoogleToken(token);
-    setGoogleToken(token);
-  };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -96,64 +56,19 @@ export function AuthProvider({ children }) {
     return signInWithEmailAndPassword(auth, email, password);
   };
 
-  // Sign in with Google — also stores Google access token for Sheets API
   const loginWithGoogle = async () => {
     await setPersistence(auth, browserLocalPersistence);
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const cred = GoogleAuthProvider.credentialFromResult(result);
-      if (cred?.accessToken) {
-        saveGoogleToken(cred.accessToken);
-        const tokenDoc = buildTokenDoc(cred.accessToken, result.user);
-        saveGoogleSheetToken(tokenDoc).catch(() => {});
-        saveUserGoogleToken(result.user.uid, tokenDoc).catch(() => {});
-      }
-      return result;
+      return await signInWithPopup(auth, googleProvider);
     } catch (err) {
       if (err.code === 'auth/account-exists-with-different-credential') {
         throw new Error(
           'This email is already registered with email & password. ' +
-          'Sign in with email/password first, then connect Google in Settings → Google Sheets.'
+          'Sign in with email/password instead.'
         );
       }
       throw err;
     }
-  };
-
-  // For already-logged-in users: link Google to get Sheets access token without changing auth
-  const connectGoogleSheets = async () => {
-    const provider = new GoogleAuthProvider();
-    provider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
-    let result;
-    try {
-      result = await linkWithPopup(auth.currentUser, provider);
-    } catch (err) {
-      if (err.code === 'auth/provider-already-linked' || err.code === 'auth/credential-already-in-use') {
-        result = await reauthenticateWithPopup(auth.currentUser, provider);
-      } else if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-        return false;
-      } else if (err.code === 'auth/popup-blocked') {
-        throw new Error('Popup was blocked by your browser. Please allow popups for this site, then try again.');
-      } else {
-        throw err;
-      }
-    }
-    const cred = GoogleAuthProvider.credentialFromResult(result);
-    if (cred?.accessToken) {
-      saveGoogleToken(cred.accessToken);
-      const tokenDoc = buildTokenDoc(cred.accessToken, auth.currentUser);
-      // Save shared token (all users benefit) + per-user token (for file-owner lookup)
-      await saveGoogleSheetToken(tokenDoc);
-      saveUserGoogleToken(auth.currentUser.uid, tokenDoc).catch(() => {});
-    }
-    return true;
-  };
-
-  // Superadmin can permanently disconnect Google Sheets access
-  const disconnectGoogleSheets = async () => {
-    localStorage.removeItem(G_TOKEN_KEY);
-    setGoogleToken(null);
-    await clearGoogleSheetToken();
   };
 
   const signup = async (email, password, displayName) => {
@@ -198,8 +113,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user, userProfile, loading,
       login, signup, logout, refreshProfile,
-      loginWithGoogle, connectGoogleSheets, disconnectGoogleSheets,
-      googleToken,
+      loginWithGoogle,
       isSuperAdmin, isAdmin,
     }}>
       {!loading && children}

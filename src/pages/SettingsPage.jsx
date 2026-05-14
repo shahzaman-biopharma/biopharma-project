@@ -7,14 +7,13 @@ import {
   getReportSettings, saveReportSettings,
   createNotification,
   updateDeptUserPermission, getAdminTabPermissions, saveAdminTabPermissions,
-  getGoogleSheetToken,
 } from '../services/firestore';
 import { generateDepartmentPrompt } from '../services/openai';
 import {
   Settings, Plus, Trash2, Edit2, Users, Bot, Database, Save,
   Loader2, X, Shield, UserPlus, ChevronDown, ChevronUp,
   Sparkles, Key, Globe, FileText, Check, Eye, EyeOff,
-  ShieldCheck, Lock, FolderOpen, Table2,
+  ShieldCheck, Lock, Table2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -53,7 +52,7 @@ const WEEKDAYS = [
 // ─── Department Form ─────────────────────────────────────────────────────────
 
 function DepartmentForm({ dept, onSave, onCancel, users }) {
-  const { googleToken, userProfile } = useAuth();
+  const { userProfile } = useAuth();
   const [form, setForm] = useState({
     name: dept?.name || '',
     tag: dept?.tag || '',
@@ -67,51 +66,19 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
   const [saving, setSaving] = useState(false);
   const [newSource, setNewSource] = useState({ type: 'googlesheet', name: '', url: '', content: '' });
   const [showAddSource, setShowAddSource] = useState(false);
-  const [driveFiles, setDriveFiles] = useState([]);
-  const [loadingDrive, setLoadingDrive] = useState(false);
-  const [showDrivePicker, setShowDrivePicker] = useState(false);
   const [driveSheetTabs, setDriveSheetTabs] = useState([]);
 
-  const browseDrive = async () => {
-    if (!googleToken) {
-      toast.error('Connect Google Sheets in Settings first (Google Sheets card above)');
-      return;
-    }
-    setLoadingDrive(true);
-    setShowDrivePicker(true);
-    setDriveFiles([]);
+  const previewSheetTabs = async (sheetId) => {
+    if (!sheetId) return;
     try {
-      const res = await fetch(
-        "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fvnd.google-apps.spreadsheet'&fields=files(id%2Cname%2CmodifiedTime)&pageSize=50&orderBy=modifiedTime%20desc",
-        { headers: { Authorization: `Bearer ${googleToken}` } }
-      );
-      if (!res.ok) throw new Error('Drive access failed');
-      const data = await res.json();
-      setDriveFiles(data.files || []);
-    } catch {
-      toast.error('Failed to load Drive files — token may have expired, reconnect Google above');
-      setShowDrivePicker(false);
-    } finally {
-      setLoadingDrive(false);
-    }
+      const res = await fetch(`/api/sheets?sheetId=${sheetId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDriveSheetTabs(data.sheetNames || []);
+      }
+    } catch { /* preview is optional */ }
   };
 
-  const selectDriveFile = async (file) => {
-    const url = `https://docs.google.com/spreadsheets/d/${file.id}/edit`;
-    setNewSource(p => ({ ...p, url, name: p.name || file.name }));
-    setShowDrivePicker(false);
-    setDriveSheetTabs([]);
-    try {
-      const res = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${file.id}?fields=sheets.properties.title`,
-        { headers: { Authorization: `Bearer ${googleToken}` } }
-      );
-      if (res.ok) {
-        const meta = await res.json();
-        setDriveSheetTabs(meta.sheets?.map(s => s.properties.title) || []);
-      }
-    } catch { /* tabs preview optional */ }
-  };
 
   const set = (field) => (e) => setForm(p => ({ ...p, [field]: e.target.value }));
 
@@ -146,7 +113,6 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
     setNewSource({ type: 'googlesheet', name: '', url: '', content: '' });
     setShowAddSource(false);
     setDriveSheetTabs([]);
-    setShowDrivePicker(false);
   };
 
   const removeSource = (id) =>
@@ -290,86 +256,38 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
               onChange={e => setNewSource(p => ({ ...p, name: e.target.value }))} placeholder="Source name" />
             {(newSource.type === 'googlesheet' || newSource.type === 'onedrive') ? (
               <div className="space-y-2">
-                {/* URL input + optional Drive browser */}
-                <div className="flex gap-2">
-                  <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={newSource.url}
-                    onChange={e => {
-                      const url = e.target.value;
-                      const autoType = /1drv\.ms|onedrive\.live\.com|sharepoint\.com/i.test(url) ? 'onedrive' : 'googlesheet';
-                      setNewSource(p => ({ ...p, url, type: autoType }));
-                      setDriveSheetTabs([]);
-                    }}
-                    placeholder={newSource.type === 'onedrive'
-                      ? 'https://1drv.ms/x/...'
-                      : 'https://docs.google.com/spreadsheets/d/...'} />
-                  {newSource.type === 'googlesheet' && (
-                    <button
-                      type="button"
-                      onClick={browseDrive}
-                      disabled={loadingDrive}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium flex-shrink-0 transition-all"
-                      style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#34d399' }}
-                      title="Browse your Google Drive files"
-                    >
-                      {loadingDrive ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                      Drive
-                    </button>
-                  )}
-                </div>
+                <input className={inputCls} style={inputStyle} value={newSource.url}
+                  onChange={e => {
+                    const url = e.target.value;
+                    const autoType = /1drv\.ms|onedrive\.live\.com|sharepoint\.com/i.test(url) ? 'onedrive' : 'googlesheet';
+                    setNewSource(p => ({ ...p, url, type: autoType }));
+                    setDriveSheetTabs([]);
+                    if (autoType === 'googlesheet') {
+                      const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+                      if (m) previewSheetTabs(m[1]);
+                    }
+                  }}
+                  placeholder={newSource.type === 'onedrive'
+                    ? 'https://1drv.ms/x/...'
+                    : 'https://docs.google.com/spreadsheets/d/...'} />
 
-                {/* Drive file list */}
-                {showDrivePicker && (
-                  <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(16,185,129,0.2)' }}>
-                    <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'rgba(16,185,129,0.15)' }}>
-                      <span className="text-xs text-emerald-400 font-medium">Your Google Sheets</span>
-                      <button onClick={() => setShowDrivePicker(false)} className="text-slate-500 hover:text-white">
-                        <X size={13} />
-                      </button>
-                    </div>
-                    {loadingDrive ? (
-                      <div className="flex items-center justify-center py-6 gap-2 text-slate-400 text-xs">
-                        <Loader2 size={14} className="animate-spin" /> Loading...
-                      </div>
-                    ) : driveFiles.length === 0 ? (
-                      <p className="text-center text-slate-500 text-xs py-6">No Google Sheets found in your Drive</p>
-                    ) : (
-                      <div style={{ maxBlockSize: 220, overflowY: 'auto' }}>
-                        {driveFiles.map(file => (
-                          <button
-                            key={file.id}
-                            type="button"
-                            onClick={() => selectDriveFile(file)}
-                            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-all hover:bg-white/5"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" flexShrink="0">
-                              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" fill="#0F9D58"/>
-                              <path d="M7 10h10v1.5H7zm0 3h10v1.5H7zm0 3h7v1.5H7z" fill="white"/>
-                            </svg>
-                            <span className="flex-1 text-slate-200 text-xs truncate">{file.name}</span>
-                            <span className="text-slate-600 text-xs flex-shrink-0">
-                              {file.modifiedTime ? new Date(file.modifiedTime).toLocaleDateString() : ''}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                {newSource.type === 'googlesheet' && (
+                  <p className="text-xs text-slate-500 pl-1">
+                    Share this sheet with <span className="text-cyan-400 select-all">biopharma-bot@biopharma-sheets.iam.gserviceaccount.com</span> (Viewer)
+                  </p>
                 )}
 
-                {/* OneDrive info note */}
                 {newSource.type === 'onedrive' && (
-                  <div className="flex items-start gap-2 px-3 py-2 rounded-xl" style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)' }}>
-                    <span className="text-blue-400 text-xs mt-0.5">ℹ</span>
-                    <p className="text-xs text-slate-400">Paste any OneDrive sharing link. No sign-in required — access is permanent as long as the file is shared as <strong className="text-slate-300">"Anyone with the link"</strong>. All Excel sheets/tabs are loaded.</p>
-                  </div>
+                  <p className="text-xs text-slate-500 pl-1">
+                    Share the file as <strong className="text-slate-300">"Anyone with the link"</strong> — permanent access, no login required.
+                  </p>
                 )}
 
-                {/* Sheet tabs preview after file selection */}
                 {driveSheetTabs.length > 0 && (
                   <div className="flex items-start gap-2 px-3 py-2 rounded-xl" style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.15)' }}>
                     <Table2 size={12} className="text-cyan-400 mt-0.5 flex-shrink-0" />
                     <div>
-                      <p className="text-xs text-cyan-400 font-medium mb-1">{driveSheetTabs.length} sheet{driveSheetTabs.length !== 1 ? 's' : ''} found</p>
+                      <p className="text-xs text-cyan-400 font-medium mb-1">{driveSheetTabs.length} sheet{driveSheetTabs.length !== 1 ? 's' : ''} detected</p>
                       <p className="text-xs text-slate-400">{driveSheetTabs.join(' • ')}</p>
                     </div>
                   </div>
@@ -725,7 +643,7 @@ function RolePermissionsTab({ adminTabPerms, onSave, saving }) {
 // ─── Main Settings Page ───────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const { isAdmin, isSuperAdmin, userProfile, connectGoogleSheets, disconnectGoogleSheets, googleToken } = useAuth();
+  const { isAdmin, isSuperAdmin, userProfile } = useAuth();
   const [tab, setTab] = useState('departments');
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
@@ -754,8 +672,6 @@ export default function SettingsPage() {
   const [visiblePasswords, setVisiblePasswords] = useState({});
   const [adminTabPerms, setAdminTabPerms] = useState({ departments: true, users: true, reports: true, access: true });
   const [savingAdminPerms, setSavingAdminPerms] = useState(false);
-  const [connectingGoogle, setConnectingGoogle] = useState(false);
-  const [googleSheetStatus, setGoogleSheetStatus] = useState(null); // from Firestore
 
   if (!isAdmin) return <Navigate to="/dashboard" replace />;
 
@@ -780,10 +696,6 @@ export default function SettingsPage() {
         const ap = await getAdminTabPermissions();
         if (ap) setAdminTabPerms(ap);
       } catch { /* no adminPermissions doc yet — use defaults */ }
-      try {
-        const gs = await getGoogleSheetToken();
-        if (gs) setGoogleSheetStatus(gs);
-      } catch { /* no token doc yet */ }
       setLoading(false);
     };
     load();
@@ -1094,96 +1006,6 @@ export default function SettingsPage() {
         /* ─── DEPARTMENTS TAB ─── */
         <div>
 
-          {/* ── Google Sheets Connection Card ── */}
-          {(() => {
-            const isTokenAlive = googleSheetStatus?.connected && googleSheetStatus?.token && Date.now() < (googleSheetStatus?.expiry || 0);
-            const isConnectedState = googleSheetStatus?.connected; // persists even after token expiry
-            const needsRefresh = isConnectedState && !isTokenAlive;
-            const statusColor = isTokenAlive ? '#34d399' : needsRefresh ? '#f59e0b' : '#475569';
-            const cardBg = isTokenAlive ? 'rgba(16,185,129,0.06)' : needsRefresh ? 'rgba(245,158,11,0.06)' : 'rgba(255,255,255,0.03)';
-            const cardBorder = isTokenAlive ? 'rgba(16,185,129,0.2)' : needsRefresh ? 'rgba(245,158,11,0.2)' : 'rgba(255,255,255,0.08)';
-
-            return (
-              <div className="mb-5 p-4 rounded-2xl" style={{ background: cardBg, border: `1px solid ${cardBorder}` }}>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                      style={{ background: isTokenAlive ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                        <path d="M17.64 9.2c0-.74-.06-1.28-.19-1.84H9v3.34h4.96c-.1.83-.64 2.08-1.84 2.92l2.84 2.2c1.7-1.57 2.68-3.88 2.68-6.62z" fill="#4285F4"/>
-                        <path d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.84-2.2c-.76.53-1.78.9-3.12.9-2.38 0-4.4-1.57-5.12-3.74L.97 13.04C2.45 15.98 5.48 18 9 18z" fill="#34A853"/>
-                        <path d="M3.88 10.78A5.54 5.54 0 0 1 3.58 9c0-.62.11-1.22.29-1.78L.96 4.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.04l2.92-2.26z" fill="#FBBC05"/>
-                        <path d="M9 3.48c1.69 0 2.83.73 3.48 1.34l2.54-2.54C13.46.89 11.43 0 9 0 5.48 0 2.44 2.02.96 4.96l2.91 2.26C4.6 5.05 6.62 3.48 9 3.48z" fill="#EA4335"/>
-                      </svg>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold" style={{ color: statusColor }}>
-                        Google Sheets — {isTokenAlive ? '✓ Active' : needsRefresh ? '⚠ Token Expired' : 'Not Connected'}
-                      </p>
-                      <p className="text-xs mt-0.5 text-slate-500">
-                        {isTokenAlive
-                          ? `Connected by ${googleSheetStatus.connectedByName} • Private sheets accessible for all users`
-                          : needsRefresh
-                          ? `Was connected by ${googleSheetStatus.connectedByName} — click Refresh to restore access`
-                          : 'Connect to enable private Google Sheets access for all users'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      onClick={async () => {
-                        // Call popup immediately on click — no async work before it
-                        // (async state updates before popup break the user-gesture chain)
-                        try {
-                          setConnectingGoogle(true);
-                          const ok = await connectGoogleSheets();
-                          if (ok) {
-                            const gs = await getGoogleSheetToken();
-                            if (gs) setGoogleSheetStatus(gs);
-                            toast.success('Google Sheets connected! All users can now access private sheets.');
-                          }
-                        } catch (err) {
-                          if (err.code === 'auth/popup-blocked') {
-                            toast.error('Popup was blocked. Please allow popups for this site in your browser settings, then try again.');
-                          } else {
-                            toast.error(err.message || 'Google connection failed');
-                          }
-                        } finally {
-                          setConnectingGoogle(false);
-                        }
-                      }}
-                      disabled={connectingGoogle}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all disabled:opacity-60"
-                      style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', color: '#60a5fa' }}
-                    >
-                      {connectingGoogle ? <Loader2 size={13} className="animate-spin" /> : <Globe size={13} />}
-                      {isConnectedState ? 'Refresh' : 'Connect'}
-                    </button>
-                    {isConnectedState && isSuperAdmin && (
-                      <button
-                        onClick={async () => {
-                          if (!confirm('Disconnect Google Sheets? All users will lose private sheet access.')) return;
-                          await disconnectGoogleSheets();
-                          setGoogleSheetStatus({ connected: false });
-                          toast.success('Google Sheets disconnected.');
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all"
-                        style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: '#f87171' }}
-                      >
-                        <X size={13} /> Disconnect
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {isConnectedState && (
-                  <p className="text-xs text-slate-600 mt-2 pl-[52px]">
-                    All users benefit from this connection — no individual Google login needed.
-                    {needsRefresh && ' Click Refresh to renew the 55-min session token.'}
-                  </p>
-                )}
-              </div>
-            );
-          })()}
 
           {!showForm && (
             <div className="flex justify-end mb-4">

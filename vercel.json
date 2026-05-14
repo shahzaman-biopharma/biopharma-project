@@ -5,7 +5,8 @@
   "functions": {
     "api/telegram.js": { "maxDuration": 60 },
     "api/cron-reports.js": { "maxDuration": 300 },
-    "api/fetch-excel.js": { "maxDuration": 30 }
+    "api/fetch-excel.js": { "maxDuration": 30 },
+    "api/sheets.js": { "maxDuration": 30 }
   },
   "crons": [
     {
