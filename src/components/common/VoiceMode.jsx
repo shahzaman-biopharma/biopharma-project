@@ -44,17 +44,20 @@ const LABEL_COLOR = {
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function VoiceMode({ department, messages, dataContext, onClose, onVoiceMessage }) {
+export default function VoiceMode({ department, messages, getDataContext, onClose, onVoiceMessage }) {
   const [phase, setPhase]       = useState('idle');
   const [transcript, setTrans]  = useState('');
   const [reply, setReply]       = useState('');
   const [errMsg, setErrMsg]     = useState('');
 
-  const activeRef       = useRef(true);
-  const recognitionRef  = useRef(null);
-  const audioRef        = useRef(null);
-  const transcriptRef   = useRef('');
-  const processingRef   = useRef(false);
+  const activeRef          = useRef(true);
+  const recognitionRef     = useRef(null);
+  const audioRef           = useRef(null);
+  const transcriptRef      = useRef('');
+  const processingRef      = useRef(false);
+  // Always call the latest version of getDataContext (avoids stale closure)
+  const getDataContextRef  = useRef(getDataContext);
+  useEffect(() => { getDataContextRef.current = getDataContext; }, [getDataContext]);
 
   // ── Stop everything ────────────────────────────────────────────────────────
   const stopAll = useCallback(() => {
@@ -153,10 +156,13 @@ export default function VoiceMode({ department, messages, dataContext, onClose, 
 
       const deptPrompt = department?.systemPrompt || `You are the AI assistant for ${department?.name}.`;
 
+      // Fetch live data from the sheet before every voice query
+      const liveContext = await getDataContextRef.current();
+
       const replyText = await chatWithBot({
         systemPrompt: deptPrompt,
         messages:     apiMessages,
-        dataContext,
+        dataContext:  liveContext,
         voiceMode:    true,
       });
 
@@ -216,7 +222,7 @@ export default function VoiceMode({ department, messages, dataContext, onClose, 
         }
       }, 3000);
     }
-  }, [department, messages, dataContext, onVoiceMessage, startListening]);
+  }, [department, messages, onVoiceMessage, startListening]);
 
   // ── Auto-start on mount ────────────────────────────────────────────────────
   useEffect(() => {

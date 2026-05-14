@@ -255,16 +255,55 @@ function ChatMessage({ msg }) {
 }
 
 // ─── Conversation memory window ──────────────────────────────────────────────
-// Keep last N messages for API context (saves cost, keeps context sharp)
 const MEMORY_WINDOW = 10;
 
 function buildApiMessages(allMessages) {
   const filtered = allMessages.filter(m => m.role !== 'system');
-  // Always keep at least the welcome message so bot knows the context
   const window = filtered.length > MEMORY_WINDOW
     ? [filtered[0], ...filtered.slice(-(MEMORY_WINDOW - 1))]
     : filtered;
   return window.map(m => ({ role: m.role, content: m.content }));
+}
+
+// ─── Live data fetcher ────────────────────────────────────────────────────────
+// Called on every bot query so the bot always sees current sheet data.
+// Never caches — each call pulls a fresh snapshot from Google Sheets API.
+async function fetchDeptContext(dept, googleToken) {
+  let ctx = `Department: ${dept.name}\nDescription: ${dept.description}\n\n`;
+  if (!dept?.dataSources?.length) return ctx;
+
+  let sharedToken = googleToken;
+  if (!sharedToken) {
+    try {
+      const stored = await getGoogleSheetToken();
+      if (stored?.connected && stored.token && Date.now() < stored.expiry) sharedToken = stored.token;
+    } catch {}
+  }
+
+  const sheetIndex = [];
+  for (const src of dept.dataSources) {
+    try {
+      if (src.type === 'googlesheet' && src.url) {
+        let tokenForSrc = sharedToken;
+        if (src.addedByUid) {
+          try {
+            const userToken = await getUserGoogleToken(src.addedByUid);
+            if (userToken?.token && Date.now() < userToken.expiry) tokenForSrc = userToken.token;
+          } catch {}
+        }
+        const result = await fetchGoogleSheetData(src.url, tokenForSrc);
+        ctx += `\n--- Data Source: "${src.name}" ---\n${result.text}\n`;
+        if (result.sheetNames?.length) {
+          sheetIndex.push(`"${src.name}": ${result.sheetNames.length} tab(s) — [${result.sheetNames.join(', ')}]`);
+        }
+      } else if (src.type === 'text' && src.content) {
+        ctx += `\n--- Data Source: "${src.name}" ---\n${src.content}\n`;
+      }
+    } catch {}
+  }
+
+  if (sheetIndex.length) ctx += `\n\n--- SHEET INDEX ---\n${sheetIndex.join('\n')}\n`;
+  return ctx;
 }
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -282,6 +321,7 @@ export default function BotPage() {
   const [pageLoading, setPageLoading] = useState(true);
   const [dataContext, setDataContext] = useState('');
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
 
   const bottomRef = useRef(null);
@@ -327,50 +367,7 @@ export default function BotPage() {
 
   const loadDataSources = async (dept) => {
     if (!dept.dataSources?.length) { setDataLoaded(true); return; }
-
-    // Get shared Google token — superadmin's token works for all users
-    let sharedToken = googleToken;
-    if (!sharedToken) {
-      try {
-        const stored = await getGoogleSheetToken();
-        if (stored?.connected && stored.token && Date.now() < stored.expiry) {
-          sharedToken = stored.token;
-        }
-      } catch { /* no token available */ }
-    }
-
-    let ctx = `Department: ${dept.name}\nDescription: ${dept.description}\n\n`;
-    const sheetIndex = []; // for bot awareness: which sheets exist per source
-
-    for (const src of dept.dataSources) {
-      try {
-        if (src.type === 'googlesheet' && src.url) {
-          // Use the token of whoever added this file — falls back to shared token
-          let tokenForSrc = sharedToken;
-          if (src.addedByUid) {
-            try {
-              const userToken = await getUserGoogleToken(src.addedByUid);
-              if (userToken?.token && Date.now() < userToken.expiry) {
-                tokenForSrc = userToken.token;
-              }
-            } catch { /* fall through to shared token */ }
-          }
-          const result = await fetchGoogleSheetData(src.url, tokenForSrc);
-          ctx += `\n--- Data Source: "${src.name}" ---\n${result.text}\n`;
-          if (result.sheetNames?.length) {
-            sheetIndex.push(`"${src.name}": ${result.sheetNames.length} tab(s) — [${result.sheetNames.join(', ')}]`);
-          }
-        } else if (src.type === 'text' && src.content) {
-          ctx += `\n--- Data Source: "${src.name}" ---\n${src.content}\n`;
-        }
-      } catch { /* skip failed source */ }
-    }
-
-    // Tell the bot about all available sheets so it can list and blend them
-    if (sheetIndex.length) {
-      ctx += `\n\n--- SHEET INDEX ---\n${sheetIndex.join('\n')}\n`;
-    }
-
+    const ctx = await fetchDeptContext(dept, googleToken);
     setDataContext(ctx);
     setDataLoaded(true);
   };
@@ -393,16 +390,22 @@ export default function BotPage() {
       const apiMessages = buildApiMessages(newMessages);
       const wantsFile = isFileRequest(userMsg);
 
+      // Always fetch live data from the sheet before answering
+      setSyncing(true);
+      const freshContext = await fetchDeptContext(department, googleToken);
+      setSyncing(false);
+      setDataContext(freshContext);
+
       if (wantsFile) {
         const [reply, fileData] = await Promise.all([
           chatWithBot({
             systemPrompt: department.systemPrompt || `You are the AI assistant for ${department.name}.`,
             messages: apiMessages,
-            dataContext,
+            dataContext: freshContext,
           }),
           generateFileData({
             userRequest: userMsg,
-            dataContext: dataContext || `Department: ${department.name}\nDescription: ${department.description}`,
+            dataContext: freshContext || `Department: ${department.name}\nDescription: ${department.description}`,
             departmentName: department.name,
           }).catch(() => null),
         ]);
@@ -423,7 +426,7 @@ export default function BotPage() {
         const reply = await chatWithBot({
           systemPrompt: department.systemPrompt || `You are the AI assistant for ${department.name}.`,
           messages: apiMessages,
-          dataContext,
+          dataContext: freshContext,
         });
         const botMessage = { role: 'assistant', content: reply, timestamp: Date.now() };
         const finalMessages = [...newMessages, botMessage];
@@ -431,6 +434,7 @@ export default function BotPage() {
         await saveChatMessage(user.uid, deptId, finalMessages);
       }
     } catch (err) {
+      setSyncing(false);
       const errMsg = err.message?.includes('API key')
         ? 'OpenAI API key not configured.'
         : 'Failed to get response. Please try again.';
@@ -444,7 +448,7 @@ export default function BotPage() {
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [input, messages, loading, department, dataContext, user.uid, deptId]);
+  }, [input, messages, loading, department, googleToken, user.uid, deptId]);
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -556,8 +560,10 @@ export default function BotPage() {
               <Bot size={13} color="#60a5fa" />
             </div>
             <div className="bp-loading-bubble">
-              <Loader2 size={14} color="#60a5fa" className="bp-animate-spin" />
-              <span className="bp-loading-text">Analyzing...</span>
+              <Loader2 size={14} color={syncing ? '#34d399' : '#60a5fa'} className="bp-animate-spin" />
+              <span className="bp-loading-text" style={{ color: syncing ? '#34d399' : undefined }}>
+                {syncing ? 'Syncing live data...' : 'Analyzing...'}
+              </span>
             </div>
           </div>
         )}
@@ -596,7 +602,7 @@ export default function BotPage() {
         <VoiceMode
           department={department}
           messages={messages}
-          dataContext={dataContext}
+          getDataContext={() => fetchDeptContext(department, googleToken)}
           onClose={() => setVoiceMode(false)}
           onVoiceMessage={handleVoiceMessage}
         />
