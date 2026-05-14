@@ -138,7 +138,7 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
 
   const addDataSource = () => {
     if (!newSource.name) { toast.error('Enter source name'); return; }
-    if (newSource.type === 'googlesheet' && !newSource.url) { toast.error('Enter Google Sheet URL'); return; }
+    if ((newSource.type === 'googlesheet' || newSource.type === 'onedrive') && !newSource.url) { toast.error('Enter URL'); return; }
     setForm(p => ({
       ...p,
       dataSources: [...p.dataSources, { ...newSource, id: Date.now(), addedByUid: userProfile?.uid }],
@@ -262,7 +262,7 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
             </div>
             <span className="text-xs px-2 py-0.5 rounded-full text-cyan-400"
               style={{ background: 'rgba(6,182,212,0.1)' }}>
-              {src.type === 'googlesheet' ? 'G.Sheet' : 'Text'}
+              {src.type === 'googlesheet' ? 'G.Sheet' : src.type === 'onedrive' ? 'OneDrive' : 'Text'}
             </span>
             <button onClick={() => removeSource(src.id)}
               className="text-slate-500 hover:text-red-400 transition-colors">
@@ -276,36 +276,45 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
           <div className="p-4 rounded-xl space-y-3 mt-2"
             style={{ background: 'rgba(6,182,212,0.05)', border: '1px solid rgba(6,182,212,0.15)' }}>
             <div className="flex gap-2">
-              {['googlesheet', 'text'].map(t => (
+              {['googlesheet', 'onedrive', 'text'].map(t => (
                 <button key={t} onClick={() => setNewSource(p => ({ ...p, type: t }))}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium capitalize transition-all"
                   style={newSource.type === t ? {
                     background: 'rgba(6,182,212,0.2)', border: '1px solid rgba(6,182,212,0.4)', color: '#22d3ee',
                   } : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#64748b' }}>
-                  {t === 'googlesheet' ? 'Google Sheet' : 'Text / Notes'}
+                  {t === 'googlesheet' ? 'Google Sheet' : t === 'onedrive' ? 'OneDrive / Excel' : 'Text / Notes'}
                 </button>
               ))}
             </div>
             <input className={inputCls} style={inputStyle} value={newSource.name}
               onChange={e => setNewSource(p => ({ ...p, name: e.target.value }))} placeholder="Source name" />
-            {newSource.type === 'googlesheet' ? (
+            {(newSource.type === 'googlesheet' || newSource.type === 'onedrive') ? (
               <div className="space-y-2">
-                {/* Browse Drive button */}
+                {/* URL input + optional Drive browser */}
                 <div className="flex gap-2">
                   <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={newSource.url}
-                    onChange={e => { setNewSource(p => ({ ...p, url: e.target.value })); setDriveSheetTabs([]); }}
-                    placeholder="https://docs.google.com/spreadsheets/d/..." />
-                  <button
-                    type="button"
-                    onClick={browseDrive}
-                    disabled={loadingDrive}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium flex-shrink-0 transition-all"
-                    style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#34d399' }}
-                    title="Browse your Google Drive files"
-                  >
-                    {loadingDrive ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                    Drive
-                  </button>
+                    onChange={e => {
+                      const url = e.target.value;
+                      const autoType = /1drv\.ms|onedrive\.live\.com|sharepoint\.com/i.test(url) ? 'onedrive' : 'googlesheet';
+                      setNewSource(p => ({ ...p, url, type: autoType }));
+                      setDriveSheetTabs([]);
+                    }}
+                    placeholder={newSource.type === 'onedrive'
+                      ? 'https://1drv.ms/x/...'
+                      : 'https://docs.google.com/spreadsheets/d/...'} />
+                  {newSource.type === 'googlesheet' && (
+                    <button
+                      type="button"
+                      onClick={browseDrive}
+                      disabled={loadingDrive}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium flex-shrink-0 transition-all"
+                      style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#34d399' }}
+                      title="Browse your Google Drive files"
+                    >
+                      {loadingDrive ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                      Drive
+                    </button>
+                  )}
                 </div>
 
                 {/* Drive file list */}
@@ -344,6 +353,14 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* OneDrive info note */}
+                {newSource.type === 'onedrive' && (
+                  <div className="flex items-start gap-2 px-3 py-2 rounded-xl" style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.2)' }}>
+                    <span className="text-blue-400 text-xs mt-0.5">ℹ</span>
+                    <p className="text-xs text-slate-400">Paste any OneDrive sharing link. No sign-in required — access is permanent as long as the file is shared as <strong className="text-slate-300">"Anyone with the link"</strong>. All Excel sheets/tabs are loaded.</p>
                   </div>
                 )}
 

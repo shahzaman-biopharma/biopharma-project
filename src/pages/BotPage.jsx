@@ -312,9 +312,9 @@ async function fetchDeptContext(dept, googleToken) {
 
   for (const src of dept.dataSources) {
     try {
-      if (src.type === 'googlesheet' && src.url) {
+      if ((src.type === 'googlesheet' || src.type === 'onedrive') && src.url) {
         let tokenForSrc = sharedToken;
-        if (src.addedByUid) {
+        if (src.type === 'googlesheet' && src.addedByUid) {
           try {
             const userToken = await getUserGoogleToken(src.addedByUid);
             if (userToken?.token && Date.now() < userToken.expiry) tokenForSrc = userToken.token;

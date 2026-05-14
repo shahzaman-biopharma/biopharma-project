@@ -1,5 +1,39 @@
 import * as XLSX from 'xlsx';
 
+// ─── OneDrive / SharePoint support ───────────────────────────────────────────
+
+function isOneDriveUrl(url) {
+  return /1drv\.ms|onedrive\.live\.com|sharepoint\.com/i.test(url);
+}
+
+async function parseExcelBlob(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const data = new Uint8Array(arrayBuffer);
+  const workbook = XLSX.read(data, { type: 'array' });
+  const sheets = {};
+  workbook.SheetNames.forEach(name => {
+    const ws = workbook.Sheets[name];
+    sheets[name] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+  });
+  return {
+    text: sheetsToText(sheets),
+    sheetNames: workbook.SheetNames,
+    tokenWorked: true,
+  };
+}
+
+export async function fetchOneDriveData(url) {
+  const res = await fetch(`/api/fetch-excel?url=${encodeURIComponent(url)}`);
+  if (!res.ok) {
+    let msg = `OneDrive access failed (${res.status}).`;
+    try { const j = await res.json(); msg = j.error || msg; } catch {}
+    throw new Error(msg + ' Make sure the file is shared as "Anyone with the link".');
+  }
+  return parseExcelBlob(await res.blob());
+}
+
+// ─── Local Excel file ─────────────────────────────────────────────────────────
+
 export async function parseExcelFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -62,8 +96,11 @@ function sheetRange(name) {
   return "'" + name.replace(/'/g, "''") + "'";
 }
 
-// Returns { text: string, sheetNames: string[] }
+// Returns { text: string, sheetNames: string[], tokenWorked: bool }
 export async function fetchGoogleSheetData(url, externalToken = null) {
+  // Route OneDrive / SharePoint links to their own fetcher — no OAuth, no expiry
+  if (isOneDriveUrl(url)) return fetchOneDriveData(url);
+
   const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (!match) throw new Error('Invalid Google Sheets URL');
   const sheetId = match[1];
