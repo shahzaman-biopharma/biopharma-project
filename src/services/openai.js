@@ -11,11 +11,23 @@ FORMATTING RULES (always follow):
 - Use ## for main sections, ### for subsections
 - Use bullet points (- item) for lists — never run them together in a sentence
 - Use numbered lists (1. 2. 3.) for steps or ranked items
-- Use markdown tables for any comparative or tabular data (| Col | Col |)
+- Use markdown tables (| Col | Col |) for any tabular or comparative data
 - Use > blockquote for important notes or warnings
-- Keep paragraphs short and justify content clearly
-- Never output raw ### or ** without formatting intent
+- Keep paragraphs short and clear
 - Respond in the same language the user writes in (Urdu or English)
+
+MULTI-SHEET DATA INTELLIGENCE (critical — always follow):
+- All data is in the DATA CONTEXT section; each tab is labeled === Sheet: [Name] ===
+- SHEET INDEX in context lists all available sheet names
+- "konsi sheets hain" / "list sheets" / "what data available" → list ALL sheet names with a brief description of what each contains
+- "blend" / "merge" / "combine" / "A∪B" / "union" → produce ONE combined table with ALL rows from all specified sheets (remove only exact duplicate rows)
+- "intersect" / "A∩B" / "common rows" → show rows present in ALL specified sheets matched on the key column
+- "compare" / "difference" / "A-B" → show what exists in one sheet but not the other
+- When a specific sheet is named → use ONLY that sheet's data
+- When no sheet is specified → use ALL sheets intelligently
+- Always label which sheet data came from when showing multi-sheet results
+- You CAN filter, sort, sum, count, average, group-by, pivot on any column in any sheet
+- You CAN find trends, anomalies, top/bottom N, date ranges across any sheet
 `;
 
 const MEMORY_INSTRUCTIONS = `
@@ -50,8 +62,8 @@ export async function chatWithBot({ systemPrompt, messages, dataContext = '', vo
       { role: 'system', content: systemContent },
       ...messages,
     ],
-    temperature: 0.7,
-    max_tokens: 1500,
+    temperature: 0.4,
+    max_tokens: 2500,
   });
 
   return response.choices[0].message.content;
@@ -104,26 +116,44 @@ export async function generateDepartmentPrompt({ name, description, businessCont
     messages: [
       {
         role: 'user',
-        content: `Create a professional AI assistant system prompt for a ${name} department in a Clinical Research Associate (CRA) biopharma company.
+        content: `Create a comprehensive, expert-level AI assistant system prompt for a ${name} department in a Clinical Research Associate (CRA) biopharma company.
 
 Department Name: ${name}
 Description: ${description}
 Business Context: ${businessContext}
 
-The prompt should:
-- Define the bot's role and expertise clearly
-- Specify what questions it can answer
-- Set professional tone for pharma/clinical research
-- Guide it to analyze data from Excel/Google Sheets
-- Instruct it to give precise, data-driven answers
-- Always format responses using markdown: ## headings, **bold** for key data, bullet lists, and tables for comparisons
-- Respond in the user's language (Urdu or English)
+The generated system prompt MUST cover ALL of the following — write it as a detailed, expert instruction set (400–600 words):
 
-Write only the system prompt text, nothing else.`,
+1. ROLE & EXPERTISE: Define the bot as a senior data analyst AND domain expert for ${name}. It deeply understands pharma/CRA workflows, regulations, and KPIs relevant to this department.
+
+2. DATA ANALYSIS CAPABILITIES: It can analyze any data in the connected sheets — find trends, anomalies, averages, totals, top/bottom performers, date-range summaries, period-over-period comparisons.
+
+3. MULTI-SHEET MASTERY: It knows all available sheets/tabs and can:
+   - List available sheets when asked
+   - Blend/union sheets (A∪B) — merge all rows from multiple sheets
+   - Intersect sheets (A∩B) — find common records
+   - Compare sheets — find differences
+   - Always label which sheet data came from
+
+4. PROACTIVE INSIGHTS: After answering a question, suggest 2-3 relevant follow-up analyses the user might want. Example: "Want me to also compare this with last month's data?" or "Shall I generate a PDF report of these findings?"
+
+5. REPORT GENERATION: When user asks for Excel, PDF, or table — confirm you can generate it and guide them.
+
+6. PROFESSIONAL TONE: Precise, data-driven, concise. Use proper pharma terminology for this department.
+
+7. LANGUAGE: Respond in the same language the user writes in (Urdu or English).
+
+8. FORMATTING: Always use ## headings, **bold** for key numbers, markdown tables for comparisons, bullet points for lists.
+
+9. MEMORY: Reference prior messages in the conversation. Never ask the user to repeat data already shared.
+
+10. STRICT DATA ACCURACY: Only use the data provided in the context. Never fabricate numbers. If data is not available, say so clearly.
+
+Write only the system prompt text, nothing else. Make it long, comprehensive, and production-ready.`,
       },
     ],
-    temperature: 0.6,
-    max_tokens: 800,
+    temperature: 0.5,
+    max_tokens: 1500,
   });
 
   return response.choices[0].message.content;
@@ -152,7 +182,7 @@ When asked to create a table/report, you MUST respond with ONLY valid JSON (no m
     }
   ]
 }
-Use the provided data context to populate the tables accurately. Create multiple sheets if the data has multiple categories.`,
+Use the provided data context to populate the tables accurately. Create multiple sheets if the data has multiple categories or source sheets.`,
       },
       {
         role: 'user',
@@ -160,7 +190,7 @@ Use the provided data context to populate the tables accurately. Create multiple
       },
     ],
     temperature: 0.2,
-    max_tokens: 3000,
+    max_tokens: 4000,
   });
 
   const raw = response.choices[0].message.content.trim();

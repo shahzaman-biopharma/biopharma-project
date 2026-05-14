@@ -44,25 +44,25 @@ function getStoredGoogleToken() {
   } catch { return null; }
 }
 
-export async function fetchGoogleSheetData(url) {
+// Returns { text: string, sheetNames: string[] }
+export async function fetchGoogleSheetData(url, externalToken = null) {
   const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (!match) throw new Error('Invalid Google Sheets URL');
   const sheetId = match[1];
 
-  // ── Authenticated path (private sheets) ──────────────────────────────────
-  const token = getStoredGoogleToken();
+  // ── Authenticated path — private sheets + ALL tabs ────────────────────────
+  const token = externalToken || getStoredGoogleToken();
   if (token) {
     try {
-      // Get all sheet names first
       const metaRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (metaRes.ok) {
         const meta = await metaRes.json();
-        const sheetNames = meta.sheets?.map(s => s.properties.title) || ['Sheet1'];
+        const sheetNames = meta.sheets?.map(s => s.properties.title) || [];
         const parts = [];
-        for (const name of sheetNames.slice(0, 6)) {
+        for (const name of sheetNames.slice(0, 10)) {
           const valRes = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(name)}`,
             { headers: { Authorization: `Bearer ${token}` } }
@@ -72,25 +72,26 @@ export async function fetchGoogleSheetData(url) {
             const rows = data.values || [];
             if (rows.length) {
               parts.push(
-                `=== ${name} ===\n` +
+                `=== Sheet: ${name} ===\n` +
                 rows.map(r => r.map(c => String(c ?? '')).join(',')).join('\n')
               );
             }
           }
         }
-        if (parts.length) return parts.join('\n\n');
+        if (parts.length) return { text: parts.join('\n\n'), sheetNames };
       }
-    } catch { /* fall through to public path */ }
+    } catch { /* fall through */ }
   }
 
-  // ── Public CSV fallback ───────────────────────────────────────────────────
+  // ── Public CSV fallback (first sheet only) ────────────────────────────────
   const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
   const res = await fetch(csvUrl);
   if (!res.ok) {
     throw new Error(
       'Cannot access this Google Sheet. ' +
-      'Either make it public ("Anyone with the link") or connect your Google account in Settings → Google Sheets.'
+      'Either make it public ("Anyone with the link") or connect Google in Settings → Departments.'
     );
   }
-  return res.text();
+  const text = await res.text();
+  return { text, sheetNames: ['Sheet1 (public access — only first tab visible)'] };
 }

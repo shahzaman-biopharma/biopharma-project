@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getDepartment, getChatHistory, saveChatMessage } from '../services/firestore';
+import { getDepartment, getChatHistory, saveChatMessage, getGoogleSheetToken } from '../services/firestore';
 import { chatWithBot, generateFileData } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
@@ -273,7 +273,7 @@ export default function BotPage() {
   const { deptId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, googleToken } = useAuth();
 
   const [department, setDepartment] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -327,17 +327,40 @@ export default function BotPage() {
 
   const loadDataSources = async (dept) => {
     if (!dept.dataSources?.length) { setDataLoaded(true); return; }
+
+    // Get shared Google token — superadmin's token works for all users
+    let sharedToken = googleToken;
+    if (!sharedToken) {
+      try {
+        const stored = await getGoogleSheetToken();
+        if (stored?.connected && stored.token && Date.now() < stored.expiry) {
+          sharedToken = stored.token;
+        }
+      } catch { /* no token available */ }
+    }
+
     let ctx = `Department: ${dept.name}\nDescription: ${dept.description}\n\n`;
+    const sheetIndex = []; // for bot awareness: which sheets exist per source
+
     for (const src of dept.dataSources) {
       try {
         if (src.type === 'googlesheet' && src.url) {
-          const csv = await fetchGoogleSheetData(src.url);
-          ctx += `\n--- Data Source: ${src.name} ---\n${csv}\n`;
+          const result = await fetchGoogleSheetData(src.url, sharedToken);
+          ctx += `\n--- Data Source: "${src.name}" ---\n${result.text}\n`;
+          if (result.sheetNames?.length) {
+            sheetIndex.push(`"${src.name}": ${result.sheetNames.length} tab(s) — [${result.sheetNames.join(', ')}]`);
+          }
         } else if (src.type === 'text' && src.content) {
-          ctx += `\n--- Data Source: ${src.name} ---\n${src.content}\n`;
+          ctx += `\n--- Data Source: "${src.name}" ---\n${src.content}\n`;
         }
       } catch { /* skip failed source */ }
     }
+
+    // Tell the bot about all available sheets so it can list and blend them
+    if (sheetIndex.length) {
+      ctx += `\n\n--- SHEET INDEX ---\n${sheetIndex.join('\n')}\n`;
+    }
+
     setDataContext(ctx);
     setDataLoaded(true);
   };

@@ -13,26 +13,38 @@ import {
   GoogleAuthProvider,
 } from 'firebase/auth';
 import { auth, googleProvider } from '../services/firebase';
-import { createUserProfile, getUserProfile, createNotification } from '../services/firestore';
+import { createUserProfile, getUserProfile, createNotification, saveGoogleSheetToken, clearGoogleSheetToken } from '../services/firestore';
 
-// ─── Google token helpers (55-min session storage) ───────────────────────────
+// ─── Google token helpers (localStorage — survives browser restarts) ─────────
 const G_TOKEN_KEY = 'bp_g_token';
+const G_TOKEN_TTL = 55 * 60 * 1000; // 55 minutes (Google's OAuth token lifetime)
 
 function readStoredGoogleToken() {
   try {
-    const s = sessionStorage.getItem(G_TOKEN_KEY);
+    const s = localStorage.getItem(G_TOKEN_KEY);
     if (!s) return null;
     const { token, expiry } = JSON.parse(s);
-    if (Date.now() > expiry) { sessionStorage.removeItem(G_TOKEN_KEY); return null; }
+    if (Date.now() > expiry) { localStorage.removeItem(G_TOKEN_KEY); return null; }
     return token;
   } catch { return null; }
 }
 
 function persistGoogleToken(token) {
-  sessionStorage.setItem(G_TOKEN_KEY, JSON.stringify({
+  localStorage.setItem(G_TOKEN_KEY, JSON.stringify({
     token,
-    expiry: Date.now() + 55 * 60 * 1000,
+    expiry: Date.now() + G_TOKEN_TTL,
   }));
+}
+
+function buildTokenDoc(token, user) {
+  return {
+    token,
+    expiry: Date.now() + G_TOKEN_TTL,
+    connectedBy: user.uid,
+    connectedByName: user.displayName || user.email,
+    connectedAt: new Date().toISOString(),
+    connected: true,
+  };
 }
 
 const AuthContext = createContext(null);
@@ -90,7 +102,10 @@ export function AuthProvider({ children }) {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const cred = GoogleAuthProvider.credentialFromResult(result);
-      if (cred?.accessToken) saveGoogleToken(cred.accessToken);
+      if (cred?.accessToken) {
+        saveGoogleToken(cred.accessToken);
+        saveGoogleSheetToken(buildTokenDoc(cred.accessToken, result.user)).catch(() => {});
+      }
       return result;
     } catch (err) {
       if (err.code === 'auth/account-exists-with-different-credential') {
@@ -107,22 +122,32 @@ export function AuthProvider({ children }) {
   const connectGoogleSheets = async () => {
     const provider = new GoogleAuthProvider();
     provider.addScope('https://www.googleapis.com/auth/spreadsheets.readonly');
+    let result;
     try {
-      const result = await linkWithPopup(auth.currentUser, provider);
-      const cred = GoogleAuthProvider.credentialFromResult(result);
-      if (cred?.accessToken) saveGoogleToken(cred.accessToken);
-      return true;
+      result = await linkWithPopup(auth.currentUser, provider);
     } catch (err) {
       if (err.code === 'auth/provider-already-linked' || err.code === 'auth/credential-already-in-use') {
-        // Already linked — re-auth to get fresh token
-        const result = await reauthenticateWithPopup(auth.currentUser, provider);
-        const cred = GoogleAuthProvider.credentialFromResult(result);
-        if (cred?.accessToken) saveGoogleToken(cred.accessToken);
-        return true;
+        result = await reauthenticateWithPopup(auth.currentUser, provider);
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        return false;
+      } else {
+        throw err;
       }
-      if (err.code === 'auth/popup-closed-by-user') return false;
-      throw err;
     }
+    const cred = GoogleAuthProvider.credentialFromResult(result);
+    if (cred?.accessToken) {
+      saveGoogleToken(cred.accessToken);
+      // Save to Firestore — all users will benefit from this token
+      await saveGoogleSheetToken(buildTokenDoc(cred.accessToken, auth.currentUser));
+    }
+    return true;
+  };
+
+  // Superadmin can permanently disconnect Google Sheets access
+  const disconnectGoogleSheets = async () => {
+    localStorage.removeItem(G_TOKEN_KEY);
+    setGoogleToken(null);
+    await clearGoogleSheetToken();
   };
 
   const signup = async (email, password, displayName) => {
@@ -167,7 +192,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user, userProfile, loading,
       login, signup, logout, refreshProfile,
-      loginWithGoogle, connectGoogleSheets,
+      loginWithGoogle, connectGoogleSheets, disconnectGoogleSheets,
       googleToken,
       isSuperAdmin, isAdmin,
     }}>
