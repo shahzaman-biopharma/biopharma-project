@@ -108,12 +108,12 @@ export async function fetchGoogleSheetData(url, externalToken = null) {
             }
           }
         }
-        if (parts.length) return { text: parts.join('\n\n'), sheetNames };
+        if (parts.length) return { text: parts.join('\n\n'), sheetNames, tokenWorked: true };
       }
     } catch { /* fall through */ }
   }
 
-  // ── Public CSV fallback (first sheet only) ────────────────────────────────
+  // ── Public CSV fallback (first sheet only — token missing or expired) ─────
   const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
   const res = await fetch(csvUrl);
   if (!res.ok) {
@@ -123,18 +123,21 @@ export async function fetchGoogleSheetData(url, externalToken = null) {
     );
   }
   const rawCsv = await res.text();
-  // Convert CSV to pipe-separated with metadata
   const csvRows = rawCsv.trim().split('\n').map(line => line.split(','));
   const csvHeaders = csvRows[0] || [];
   const csvData = csvRows.slice(1).slice(0, MAX_ROWS_PER_SHEET);
   const csvTrunc = csvRows.length - 1 > MAX_ROWS_PER_SHEET;
   const text = [
-    '=== Sheet: Sheet1 ===',
+    '=== Sheet: Sheet1 (first tab only — Google token expired) ===',
     `Columns (${csvHeaders.length}): ${csvHeaders.join(' | ')}`,
     `Total rows: ${csvRows.length - 1}${csvTrunc ? ` (showing first ${MAX_ROWS_PER_SHEET})` : ''}`,
     '',
     csvHeaders.join(' | '),
     ...csvData.map(r => csvHeaders.map((_, i) => String(r[i] ?? '')).join(' | ')),
   ].join('\n');
-  return { text, sheetNames: ['Sheet1 (public access — only first tab visible)'] };
+  return {
+    text,
+    sheetNames: ['Sheet1 (token expired — only first tab loaded)'],
+    tokenWorked: false,
+  };
 }

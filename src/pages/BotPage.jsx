@@ -292,11 +292,12 @@ function buildApiMessages(allMessages) {
 }
 
 // ─── Live data fetcher ────────────────────────────────────────────────────────
-// Called on every bot query so the bot always sees current sheet data.
-// Never caches — each call pulls a fresh snapshot from Google Sheets API.
+// Returns { context: string, anyTokenFailed: boolean }
+// anyTokenFailed=true means at least one Google Sheet fell back to public CSV
+// because the OAuth token is expired — user must reconnect in Settings.
 async function fetchDeptContext(dept, googleToken) {
   let ctx = `Department: ${dept.name}\nDescription: ${dept.description}\n\n`;
-  if (!dept?.dataSources?.length) return ctx;
+  if (!dept?.dataSources?.length) return { context: ctx, anyTokenFailed: false };
 
   let sharedToken = googleToken;
   if (!sharedToken) {
@@ -306,7 +307,9 @@ async function fetchDeptContext(dept, googleToken) {
     } catch {}
   }
 
+  let anyTokenFailed = false;
   const sheetIndex = [];
+
   for (const src of dept.dataSources) {
     try {
       if (src.type === 'googlesheet' && src.url) {
@@ -322,6 +325,10 @@ async function fetchDeptContext(dept, googleToken) {
         if (result.sheetNames?.length) {
           sheetIndex.push(`"${src.name}": ${result.sheetNames.length} tab(s) — [${result.sheetNames.join(', ')}]`);
         }
+        if (result.tokenWorked === false) {
+          anyTokenFailed = true;
+          ctx += `\n⚠ WARNING for "${src.name}": Google OAuth token has expired. Only the FIRST TAB is loaded via public access. The other tabs are NOT available until the SuperAdmin reconnects Google in Settings → Departments → Refresh.\n`;
+        }
       } else if (src.type === 'text' && src.content) {
         ctx += `\n--- Data Source: "${src.name}" ---\n${src.content}\n`;
       }
@@ -329,7 +336,7 @@ async function fetchDeptContext(dept, googleToken) {
   }
 
   if (sheetIndex.length) ctx += `\n\n--- SHEET INDEX ---\n${sheetIndex.join('\n')}\n`;
-  return ctx;
+  return { context: ctx, anyTokenFailed };
 }
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -348,6 +355,7 @@ export default function BotPage() {
   const [dataContext, setDataContext] = useState('');
   const [dataLoaded, setDataLoaded] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [tokenWarning, setTokenWarning] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false);
 
   const bottomRef = useRef(null);
@@ -405,7 +413,8 @@ export default function BotPage() {
 
   const loadDataSources = async (dept) => {
     if (!dept.dataSources?.length) { setDataLoaded(true); return; }
-    const ctx = await fetchDeptContext(dept, googleToken);
+    const { context: ctx, anyTokenFailed } = await fetchDeptContext(dept, googleToken);
+    if (anyTokenFailed) setTokenWarning(true);
     setDataContext(ctx);
     setDataLoaded(true);
   };
@@ -431,9 +440,15 @@ export default function BotPage() {
 
       // Fetch live data from the sheet — always fresh, never cached
       setSyncing(true);
-      const freshContext = await fetchDeptContext(dept, googleToken);
+      const { context: freshContext, anyTokenFailed } = await fetchDeptContext(dept, googleToken);
       setSyncing(false);
       setDataContext(freshContext);
+      if (anyTokenFailed) {
+        setTokenWarning(true);
+        toast('Google token expired — only first tab accessible. Reconnect in Settings.', { icon: '⚠️', duration: 7000 });
+      } else {
+        setTokenWarning(false);
+      }
 
       if (wantsFile) {
         const [reply, fileData] = await Promise.all([
@@ -578,6 +593,32 @@ export default function BotPage() {
         </button>
       </div>
 
+      {/* ── Token expiry warning banner ── */}
+      {tokenWarning && (
+        <div style={{
+          background: 'rgba(234,179,8,0.12)',
+          borderBottom: '1px solid rgba(234,179,8,0.25)',
+          padding: '8px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          fontSize: 12,
+        }}>
+          <span style={{ color: '#fbbf24', flexShrink: 0 }}>⚠</span>
+          <span style={{ color: '#fde68a', flex: 1 }}>
+            Google token expired — only first sheet tab is accessible. SuperAdmin must
+            <button
+              onClick={() => navigate('/settings')}
+              style={{ color: '#fbbf24', textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px', fontSize: 12 }}
+            >
+              reconnect Google in Settings
+            </button>
+            to restore full access.
+          </span>
+          <button onClick={() => setTokenWarning(false)} style={{ color: '#92400e', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0, fontSize: 14 }}>✕</button>
+        </div>
+      )}
+
       {/* ── Messages ── */}
       <div className="bp-messages">
         {messages.map((msg, i) => (
@@ -641,7 +682,10 @@ export default function BotPage() {
         <VoiceMode
           department={department}
           messages={messages}
-          getDataContext={() => fetchDeptContext(departmentRef.current, googleToken)}
+          getDataContext={async () => {
+            const { context } = await fetchDeptContext(departmentRef.current, googleToken);
+            return context;
+          }}
           onClose={() => setVoiceMode(false)}
           onVoiceMessage={handleVoiceMessage}
         />
