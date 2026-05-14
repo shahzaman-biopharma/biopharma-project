@@ -257,12 +257,30 @@ function ChatMessage({ msg }) {
 // ─── Conversation memory window ──────────────────────────────────────────────
 const MEMORY_WINDOW = 10;
 
+// Strip detailed tabular data from old bot responses to prevent stale data
+// contaminating live context. Keeps conversational intent, removes old facts.
+function sanitizeHistoryMessage(msg) {
+  if (msg.role !== 'assistant') return msg;
+  let content = msg.content;
+  // Remove markdown tables from old bot replies — live DATA CONTEXT is authoritative
+  content = content.replace(/\|.+\|[\s\S]*?(?=\n\n|\n##|\n>|$)/g, '[table removed — see live data]');
+  // Remove long numbered/bullet lists that likely contained data rows
+  const lines = content.split('\n');
+  if (lines.length > 15) {
+    content = lines.slice(0, 6).join('\n') + '\n[... prior response truncated to prevent stale data ...]';
+  }
+  return { ...msg, content };
+}
+
 function buildApiMessages(allMessages) {
   const filtered = allMessages.filter(m => m.role !== 'system');
-  const window = filtered.length > MEMORY_WINDOW
+  const windowed = filtered.length > MEMORY_WINDOW
     ? [filtered[0], ...filtered.slice(-(MEMORY_WINDOW - 1))]
     : filtered;
-  return window.map(m => ({ role: m.role, content: m.content }));
+  // Sanitize older messages (keep the latest 2 intact for follow-up context)
+  return windowed.map((m, i) =>
+    i < windowed.length - 2 ? sanitizeHistoryMessage(m) : { role: m.role, content: m.content }
+  );
 }
 
 // ─── Live data fetcher ────────────────────────────────────────────────────────

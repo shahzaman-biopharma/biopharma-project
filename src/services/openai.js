@@ -5,39 +5,73 @@ const openai = new OpenAI({
   dangerouslyAllowBrowser: true,
 });
 
+// ─── Data accuracy — highest priority, placed first in system prompt ──────────
+const DATA_ACCURACY_RULES = `
+╔══════════════════════════════════════════════════════════════════════╗
+║  DATA ACCURACY — ABSOLUTE RULES — OVERRIDE EVERYTHING ELSE          ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+1. DATA CONTEXT IS THE ONLY SOURCE OF TRUTH
+   - Every value you display (name, number, date, ID, status, anything)
+     MUST exist VERBATIM in the DATA CONTEXT section below.
+   - You have ZERO prior knowledge of this company's records.
+     Do not use any knowledge from your training about people, trial data,
+     protocols, or outcomes. Everything comes from DATA CONTEXT only.
+
+2. NEVER INVENT DATA
+   - Do not generate, guess, interpolate, or assume ANY value.
+   - Do not fill empty/blank cells — show them as blank.
+   - Do not add rows that are not in the data.
+   - Do not add columns that are not in the data headers.
+
+3. CONVERSATION HISTORY IS UNRELIABLE FOR FACTS
+   - Previous bot messages may contain DELETED or OUTDATED data.
+   - A person, entry, or value mentioned in history may no longer exist
+     in the current file. NEVER copy data from history as if it were true.
+   - For all factual answers: use only DATA CONTEXT, not history.
+
+4. EXACT COLUMN ALIGNMENT
+   - The data uses " | " as column separator. Row 1 is always the header.
+   - Map each value to its correct column header. Do not shift columns.
+   - "Total rows: N" tells you the EXACT count — do not show more or fewer.
+
+5. IF NOT FOUND → SAY SO
+   - If something is not in the DATA CONTEXT, respond:
+     "This entry/value is not present in the current connected data."
+   - Do not make up a plausible-sounding answer.
+`;
+
 const FORMAT_INSTRUCTIONS = `
-FORMATTING RULES (always follow):
+FORMATTING RULES:
 - Use **bold** for important terms, numbers, and key findings
 - Use ## for main sections, ### for subsections
-- Use bullet points (- item) for lists — never run them together in a sentence
+- Use bullet points (- item) for lists
 - Use numbered lists (1. 2. 3.) for steps or ranked items
 - Use markdown tables (| Col | Col |) for any tabular or comparative data
-- Use > blockquote for important notes or warnings
 - Keep paragraphs short and clear
 - Respond in the same language the user writes in (Urdu or English)
 
-MULTI-SHEET DATA INTELLIGENCE (critical — always follow):
+MULTI-SHEET DATA INTELLIGENCE:
 - All data is in the DATA CONTEXT section; each tab is labeled === Sheet: [Name] ===
 - SHEET INDEX in context lists all available sheet names
-- "konsi sheets hain" / "list sheets" / "what data available" → list ALL sheet names with a brief description of what each contains
-- "blend" / "merge" / "combine" / "A∪B" / "union" → produce ONE combined table with ALL rows from all specified sheets (remove only exact duplicate rows)
-- "intersect" / "A∩B" / "common rows" → show rows present in ALL specified sheets matched on the key column
-- "compare" / "difference" / "A-B" → show what exists in one sheet but not the other
+- "konsi sheets hain" / "list sheets" → list ALL sheet names with brief description
+- "blend" / "merge" / "A∪B" / "union" → ONE combined table with ALL rows (remove exact duplicates)
+- "intersect" / "A∩B" / "common rows" → rows present in ALL specified sheets
+- "compare" / "difference" / "A-B" → what exists in one sheet but not another
 - When a specific sheet is named → use ONLY that sheet's data
-- When no sheet is specified → use ALL sheets intelligently
-- Always label which sheet data came from when showing multi-sheet results
-- You CAN filter, sort, sum, count, average, group-by, pivot on any column in any sheet
-- You CAN find trends, anomalies, top/bottom N, date ranges across any sheet
+- Always label which sheet data came from in multi-sheet results
+- You CAN filter, sort, sum, count, average, group-by, pivot on any column
 `;
 
 const MEMORY_INSTRUCTIONS = `
-CONVERSATION MEMORY (critical — always follow):
-- You have the recent conversation history available to you
-- When user says "jo tumne diya", "woh data", "pehle wali list", "us mein se", "same data mein", "that data", "the list you gave" — they mean something from YOUR previous message in this conversation
-- Find that previous response in history and use it as the base for your answer
-- If user asks to remove/add/modify something from previously given data → apply the change and return the complete updated result with clear indication of what changed
-- If user asks a follow-up without providing new data → use conversation history, never ask the user to repeat information already shared in this session
-- Never say "please provide the data again" if it was already given in this conversation
+CONVERSATION MEMORY:
+- Use history for question context and follow-up understanding only.
+- CRITICAL: For any factual data (names, numbers, dates, IDs, statuses) —
+  history is UNRELIABLE. Data changes in the live sheet are not reflected
+  in history. ALWAYS derive facts from current DATA CONTEXT, not history.
+- "jo tumne diya" / "woh data" / "pehle wali list" → re-derive from DATA CONTEXT,
+  do not copy from a previous bot message.
+- Never say "please provide the data again" if it was shared this session.
 `;
 
 const VOICE_INSTRUCTIONS = `
@@ -50,10 +84,14 @@ VOICE MODE — STRICT RULES (override all formatting rules):
 
 export async function chatWithBot({ systemPrompt, messages, dataContext = '', voiceMode = false }) {
   const systemContent = [
+    // Accuracy rules go first — highest priority
+    dataContext ? DATA_ACCURACY_RULES : '',
     systemPrompt,
     voiceMode ? VOICE_INSTRUCTIONS : FORMAT_INSTRUCTIONS,
     MEMORY_INSTRUCTIONS,
-    dataContext ? `--- DATA CONTEXT ---\n${dataContext}` : '',
+    dataContext
+      ? `--- DATA CONTEXT (LIVE — fetched right now from connected sheets) ---\n${dataContext}`
+      : '',
   ].filter(Boolean).join('\n\n');
 
   const response = await openai.chat.completions.create({
@@ -62,7 +100,7 @@ export async function chatWithBot({ systemPrompt, messages, dataContext = '', vo
       { role: 'system', content: systemContent },
       ...messages,
     ],
-    temperature: 0.4,
+    temperature: 0.2,
     max_tokens: 2500,
   });
 

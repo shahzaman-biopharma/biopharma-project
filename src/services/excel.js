@@ -22,12 +22,24 @@ export async function parseExcelFile(file) {
   });
 }
 
+const MAX_ROWS_PER_SHEET = 500;
+
 export function sheetsToText(sheets) {
   let text = '';
   Object.entries(sheets).forEach(([sheetName, rows]) => {
+    if (!rows.length) return;
+    const headers = rows[0] || [];
+    const dataRows = rows.slice(1);
+    const limited = dataRows.slice(0, MAX_ROWS_PER_SHEET);
+    const truncated = dataRows.length > MAX_ROWS_PER_SHEET;
+
     text += `\n=== Sheet: ${sheetName} ===\n`;
-    rows.forEach(row => {
-      text += row.join(' | ') + '\n';
+    text += `Columns (${headers.length}): ${headers.join(' | ')}\n`;
+    text += `Total rows: ${dataRows.length}${truncated ? ` (showing first ${MAX_ROWS_PER_SHEET})` : ''}\n\n`;
+    text += headers.join(' | ') + '\n';
+    limited.forEach(row => {
+      const padded = headers.map((_, i) => String(row[i] ?? ''));
+      text += padded.join(' | ') + '\n';
     });
   });
   return text.trim();
@@ -77,10 +89,22 @@ export async function fetchGoogleSheetData(url, externalToken = null) {
             const data = await valRes.json();
             const rows = data.values || [];
             if (rows.length) {
-              parts.push(
-                `=== Sheet: ${name} ===\n` +
-                rows.map(r => r.map(c => String(c ?? '')).join(',')).join('\n')
-              );
+              const headers = rows[0] || [];
+              const dataRows = rows.slice(1);
+              const limited = dataRows.slice(0, MAX_ROWS_PER_SHEET);
+              const truncated = dataRows.length > MAX_ROWS_PER_SHEET;
+              const lines = [
+                `=== Sheet: ${name} ===`,
+                `Columns (${headers.length}): ${headers.join(' | ')}`,
+                `Total rows: ${dataRows.length}${truncated ? ` (showing first ${MAX_ROWS_PER_SHEET})` : ''}`,
+                '',
+                headers.join(' | '),
+                ...limited.map(r => {
+                  const padded = headers.map((_, i) => String(r[i] ?? ''));
+                  return padded.join(' | ');
+                }),
+              ];
+              parts.push(lines.join('\n'));
             }
           }
         }
@@ -98,6 +122,19 @@ export async function fetchGoogleSheetData(url, externalToken = null) {
       'Either make it public ("Anyone with the link") or connect Google in Settings → Departments.'
     );
   }
-  const text = await res.text();
+  const rawCsv = await res.text();
+  // Convert CSV to pipe-separated with metadata
+  const csvRows = rawCsv.trim().split('\n').map(line => line.split(','));
+  const csvHeaders = csvRows[0] || [];
+  const csvData = csvRows.slice(1).slice(0, MAX_ROWS_PER_SHEET);
+  const csvTrunc = csvRows.length - 1 > MAX_ROWS_PER_SHEET;
+  const text = [
+    '=== Sheet: Sheet1 ===',
+    `Columns (${csvHeaders.length}): ${csvHeaders.join(' | ')}`,
+    `Total rows: ${csvRows.length - 1}${csvTrunc ? ` (showing first ${MAX_ROWS_PER_SHEET})` : ''}`,
+    '',
+    csvHeaders.join(' | '),
+    ...csvData.map(r => csvHeaders.map((_, i) => String(r[i] ?? '')).join(' | ')),
+  ].join('\n');
   return { text, sheetNames: ['Sheet1 (public access — only first tab visible)'] };
 }
