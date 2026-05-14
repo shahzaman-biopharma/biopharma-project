@@ -251,6 +251,19 @@ export async function clearGoogleSheetToken() {
   await setDoc(doc(db, 'settings', 'googleSheetsToken'), { connected: false, token: null, expiry: 0 }, { merge: true });
 }
 
+// ─── Per-User Google Tokens ───────────────────────────────────────────────────
+// Each admin/superadmin who connects Google gets their own token stored here.
+// Used to access data sources they personally added (private file ownership).
+
+export async function saveUserGoogleToken(uid, tokenData) {
+  await setDoc(doc(db, 'userGoogleTokens', uid), tokenData);
+}
+
+export async function getUserGoogleToken(uid) {
+  const snap = await getDoc(doc(db, 'userGoogleTokens', uid));
+  return snap.exists() ? snap.data() : null;
+}
+
 export async function markAllNotificationsRead(userId, isAdmin) {
   const recipientIds = isAdmin ? [userId, 'admins'] : [userId];
   const q = query(

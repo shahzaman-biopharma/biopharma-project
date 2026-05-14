@@ -14,7 +14,7 @@ import {
   Settings, Plus, Trash2, Edit2, Users, Bot, Database, Save,
   Loader2, X, Shield, UserPlus, ChevronDown, ChevronUp,
   Sparkles, Key, Globe, FileText, Check, Eye, EyeOff,
-  ShieldCheck, Lock,
+  ShieldCheck, Lock, FolderOpen, Table2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -53,6 +53,7 @@ const WEEKDAYS = [
 // ─── Department Form ─────────────────────────────────────────────────────────
 
 function DepartmentForm({ dept, onSave, onCancel, users }) {
+  const { googleToken, userProfile } = useAuth();
   const [form, setForm] = useState({
     name: dept?.name || '',
     tag: dept?.tag || '',
@@ -66,6 +67,51 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
   const [saving, setSaving] = useState(false);
   const [newSource, setNewSource] = useState({ type: 'googlesheet', name: '', url: '', content: '' });
   const [showAddSource, setShowAddSource] = useState(false);
+  const [driveFiles, setDriveFiles] = useState([]);
+  const [loadingDrive, setLoadingDrive] = useState(false);
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
+  const [driveSheetTabs, setDriveSheetTabs] = useState([]);
+
+  const browseDrive = async () => {
+    if (!googleToken) {
+      toast.error('Connect Google Sheets in Settings first (Google Sheets card above)');
+      return;
+    }
+    setLoadingDrive(true);
+    setShowDrivePicker(true);
+    setDriveFiles([]);
+    try {
+      const res = await fetch(
+        "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fvnd.google-apps.spreadsheet'&fields=files(id%2Cname%2CmodifiedTime)&pageSize=50&orderBy=modifiedTime%20desc",
+        { headers: { Authorization: `Bearer ${googleToken}` } }
+      );
+      if (!res.ok) throw new Error('Drive access failed');
+      const data = await res.json();
+      setDriveFiles(data.files || []);
+    } catch {
+      toast.error('Failed to load Drive files — token may have expired, reconnect Google above');
+      setShowDrivePicker(false);
+    } finally {
+      setLoadingDrive(false);
+    }
+  };
+
+  const selectDriveFile = async (file) => {
+    const url = `https://docs.google.com/spreadsheets/d/${file.id}/edit`;
+    setNewSource(p => ({ ...p, url, name: p.name || file.name }));
+    setShowDrivePicker(false);
+    setDriveSheetTabs([]);
+    try {
+      const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${file.id}?fields=sheets.properties.title`,
+        { headers: { Authorization: `Bearer ${googleToken}` } }
+      );
+      if (res.ok) {
+        const meta = await res.json();
+        setDriveSheetTabs(meta.sheets?.map(s => s.properties.title) || []);
+      }
+    } catch { /* tabs preview optional */ }
+  };
 
   const set = (field) => (e) => setForm(p => ({ ...p, [field]: e.target.value }));
 
@@ -93,9 +139,14 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
   const addDataSource = () => {
     if (!newSource.name) { toast.error('Enter source name'); return; }
     if (newSource.type === 'googlesheet' && !newSource.url) { toast.error('Enter Google Sheet URL'); return; }
-    setForm(p => ({ ...p, dataSources: [...p.dataSources, { ...newSource, id: Date.now() }] }));
+    setForm(p => ({
+      ...p,
+      dataSources: [...p.dataSources, { ...newSource, id: Date.now(), addedByUid: userProfile?.uid }],
+    }));
     setNewSource({ type: 'googlesheet', name: '', url: '', content: '' });
     setShowAddSource(false);
+    setDriveSheetTabs([]);
+    setShowDrivePicker(false);
   };
 
   const removeSource = (id) =>
@@ -238,9 +289,75 @@ function DepartmentForm({ dept, onSave, onCancel, users }) {
             <input className={inputCls} style={inputStyle} value={newSource.name}
               onChange={e => setNewSource(p => ({ ...p, name: e.target.value }))} placeholder="Source name" />
             {newSource.type === 'googlesheet' ? (
-              <input className={inputCls} style={inputStyle} value={newSource.url}
-                onChange={e => setNewSource(p => ({ ...p, url: e.target.value }))}
-                placeholder="https://docs.google.com/spreadsheets/d/..." />
+              <div className="space-y-2">
+                {/* Browse Drive button */}
+                <div className="flex gap-2">
+                  <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={newSource.url}
+                    onChange={e => { setNewSource(p => ({ ...p, url: e.target.value })); setDriveSheetTabs([]); }}
+                    placeholder="https://docs.google.com/spreadsheets/d/..." />
+                  <button
+                    type="button"
+                    onClick={browseDrive}
+                    disabled={loadingDrive}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium flex-shrink-0 transition-all"
+                    style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#34d399' }}
+                    title="Browse your Google Drive files"
+                  >
+                    {loadingDrive ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
+                    Drive
+                  </button>
+                </div>
+
+                {/* Drive file list */}
+                {showDrivePicker && (
+                  <div className="rounded-xl overflow-hidden" style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(16,185,129,0.2)' }}>
+                    <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: 'rgba(16,185,129,0.15)' }}>
+                      <span className="text-xs text-emerald-400 font-medium">Your Google Sheets</span>
+                      <button onClick={() => setShowDrivePicker(false)} className="text-slate-500 hover:text-white">
+                        <X size={13} />
+                      </button>
+                    </div>
+                    {loadingDrive ? (
+                      <div className="flex items-center justify-center py-6 gap-2 text-slate-400 text-xs">
+                        <Loader2 size={14} className="animate-spin" /> Loading...
+                      </div>
+                    ) : driveFiles.length === 0 ? (
+                      <p className="text-center text-slate-500 text-xs py-6">No Google Sheets found in your Drive</p>
+                    ) : (
+                      <div style={{ maxBlockSize: 220, overflowY: 'auto' }}>
+                        {driveFiles.map(file => (
+                          <button
+                            key={file.id}
+                            type="button"
+                            onClick={() => selectDriveFile(file)}
+                            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left transition-all hover:bg-white/5"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" flexShrink="0">
+                              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" fill="#0F9D58"/>
+                              <path d="M7 10h10v1.5H7zm0 3h10v1.5H7zm0 3h7v1.5H7z" fill="white"/>
+                            </svg>
+                            <span className="flex-1 text-slate-200 text-xs truncate">{file.name}</span>
+                            <span className="text-slate-600 text-xs flex-shrink-0">
+                              {file.modifiedTime ? new Date(file.modifiedTime).toLocaleDateString() : ''}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Sheet tabs preview after file selection */}
+                {driveSheetTabs.length > 0 && (
+                  <div className="flex items-start gap-2 px-3 py-2 rounded-xl" style={{ background: 'rgba(6,182,212,0.06)', border: '1px solid rgba(6,182,212,0.15)' }}>
+                    <Table2 size={12} className="text-cyan-400 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs text-cyan-400 font-medium mb-1">{driveSheetTabs.length} sheet{driveSheetTabs.length !== 1 ? 's' : ''} found</p>
+                      <p className="text-xs text-slate-400">{driveSheetTabs.join(' • ')}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
               <textarea className={inputCls} style={inputStyle} value={newSource.content}
                 onChange={e => setNewSource(p => ({ ...p, content: e.target.value }))}

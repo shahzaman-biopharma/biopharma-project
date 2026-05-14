@@ -13,7 +13,7 @@ import {
   GoogleAuthProvider,
 } from 'firebase/auth';
 import { auth, googleProvider } from '../services/firebase';
-import { createUserProfile, getUserProfile, createNotification, saveGoogleSheetToken, clearGoogleSheetToken } from '../services/firestore';
+import { createUserProfile, getUserProfile, createNotification, saveGoogleSheetToken, clearGoogleSheetToken, saveUserGoogleToken } from '../services/firestore';
 
 // ─── Google token helpers (localStorage — survives browser restarts) ─────────
 const G_TOKEN_KEY = 'bp_g_token';
@@ -104,7 +104,9 @@ export function AuthProvider({ children }) {
       const cred = GoogleAuthProvider.credentialFromResult(result);
       if (cred?.accessToken) {
         saveGoogleToken(cred.accessToken);
-        saveGoogleSheetToken(buildTokenDoc(cred.accessToken, result.user)).catch(() => {});
+        const tokenDoc = buildTokenDoc(cred.accessToken, result.user);
+        saveGoogleSheetToken(tokenDoc).catch(() => {});
+        saveUserGoogleToken(result.user.uid, tokenDoc).catch(() => {});
       }
       return result;
     } catch (err) {
@@ -137,8 +139,10 @@ export function AuthProvider({ children }) {
     const cred = GoogleAuthProvider.credentialFromResult(result);
     if (cred?.accessToken) {
       saveGoogleToken(cred.accessToken);
-      // Save to Firestore — all users will benefit from this token
-      await saveGoogleSheetToken(buildTokenDoc(cred.accessToken, auth.currentUser));
+      const tokenDoc = buildTokenDoc(cred.accessToken, auth.currentUser);
+      // Save shared token (all users benefit) + per-user token (for file-owner lookup)
+      await saveGoogleSheetToken(tokenDoc);
+      saveUserGoogleToken(auth.currentUser.uid, tokenDoc).catch(() => {});
     }
     return true;
   };

@@ -33,15 +33,21 @@ export function sheetsToText(sheets) {
   return text.trim();
 }
 
-// Read stored Google OAuth token (written by AuthContext)
+// Read stored Google OAuth token (written by AuthContext — stored in localStorage)
 function getStoredGoogleToken() {
   try {
-    const s = sessionStorage.getItem('bp_g_token');
+    const s = localStorage.getItem('bp_g_token');
     if (!s) return null;
     const { token, expiry } = JSON.parse(s);
-    if (Date.now() > expiry) { sessionStorage.removeItem('bp_g_token'); return null; }
+    if (Date.now() > expiry) { localStorage.removeItem('bp_g_token'); return null; }
     return token;
   } catch { return null; }
+}
+
+// Wrap sheet name in single quotes for proper Google Sheets API A1 notation
+// Handles sheet names with spaces, special chars (e.g. "Medical Records Tracker BIRC")
+function sheetRange(name) {
+  return "'" + name.replace(/'/g, "''") + "'";
 }
 
 // Returns { text: string, sheetNames: string[] }
@@ -64,7 +70,7 @@ export async function fetchGoogleSheetData(url, externalToken = null) {
         const parts = [];
         for (const name of sheetNames.slice(0, 10)) {
           const valRes = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(name)}`,
+            `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(sheetRange(name))}`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
           if (valRes.ok) {

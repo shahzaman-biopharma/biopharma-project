@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getDepartment, getChatHistory, saveChatMessage, getGoogleSheetToken } from '../services/firestore';
+import { getDepartment, getChatHistory, saveChatMessage, getGoogleSheetToken, getUserGoogleToken } from '../services/firestore';
 import { chatWithBot, generateFileData } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
@@ -345,7 +345,17 @@ export default function BotPage() {
     for (const src of dept.dataSources) {
       try {
         if (src.type === 'googlesheet' && src.url) {
-          const result = await fetchGoogleSheetData(src.url, sharedToken);
+          // Use the token of whoever added this file — falls back to shared token
+          let tokenForSrc = sharedToken;
+          if (src.addedByUid) {
+            try {
+              const userToken = await getUserGoogleToken(src.addedByUid);
+              if (userToken?.token && Date.now() < userToken.expiry) {
+                tokenForSrc = userToken.token;
+              }
+            } catch { /* fall through to shared token */ }
+          }
+          const result = await fetchGoogleSheetData(src.url, tokenForSrc);
           ctx += `\n--- Data Source: "${src.name}" ---\n${result.text}\n`;
           if (result.sheetNames?.length) {
             sheetIndex.push(`"${src.name}": ${result.sheetNames.length} tab(s) — [${result.sheetNames.join(', ')}]`);
