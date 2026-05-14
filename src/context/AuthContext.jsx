@@ -130,8 +130,10 @@ export function AuthProvider({ children }) {
     } catch (err) {
       if (err.code === 'auth/provider-already-linked' || err.code === 'auth/credential-already-in-use') {
         result = await reauthenticateWithPopup(auth.currentUser, provider);
-      } else if (err.code === 'auth/popup-closed-by-user') {
+      } else if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
         return false;
+      } else if (err.code === 'auth/popup-blocked') {
+        throw new Error('Popup was blocked by your browser. Please allow popups for this site, then try again.');
       } else {
         throw err;
       }

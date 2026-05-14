@@ -1115,8 +1115,10 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={async () => {
-                        setConnectingGoogle(true);
+                        // Call popup immediately on click — no async work before it
+                        // (async state updates before popup break the user-gesture chain)
                         try {
+                          setConnectingGoogle(true);
                           const ok = await connectGoogleSheets();
                           if (ok) {
                             const gs = await getGoogleSheetToken();
@@ -1124,7 +1126,11 @@ export default function SettingsPage() {
                             toast.success('Google Sheets connected! All users can now access private sheets.');
                           }
                         } catch (err) {
-                          toast.error(err.message || 'Google connection failed');
+                          if (err.code === 'auth/popup-blocked') {
+                            toast.error('Popup was blocked. Please allow popups for this site in your browser settings, then try again.');
+                          } else {
+                            toast.error(err.message || 'Google connection failed');
+                          }
                         } finally {
                           setConnectingGoogle(false);
                         }
