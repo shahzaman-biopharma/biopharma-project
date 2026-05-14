@@ -66,6 +66,12 @@ export function subscribeToDepartments(callback) {
   );
 }
 
+export function subscribeToDepartment(deptId, callback) {
+  return onSnapshot(doc(db, 'departments', deptId), snap => {
+    callback(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+  });
+}
+
 // ─── Chats ────────────────────────────────────────────────────────────────────
 
 export async function saveChatMessage(userId, departmentId, messages) {

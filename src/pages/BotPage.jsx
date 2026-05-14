@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getDepartment, getChatHistory, saveChatMessage, getGoogleSheetToken, getUserGoogleToken } from '../services/firestore';
+import { subscribeToDepartment, getChatHistory, saveChatMessage, getGoogleSheetToken, getUserGoogleToken } from '../services/firestore';
 import { chatWithBot, generateFileData } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
@@ -257,19 +257,22 @@ function ChatMessage({ msg }) {
 // ─── Conversation memory window ──────────────────────────────────────────────
 const MEMORY_WINDOW = 10;
 
-// Strip detailed tabular data from old bot responses to prevent stale data
-// contaminating live context. Keeps conversational intent, removes old facts.
-function sanitizeHistoryMessage(msg) {
-  if (msg.role !== 'assistant') return msg;
-  let content = msg.content;
-  // Remove markdown tables from old bot replies — live DATA CONTEXT is authoritative
-  content = content.replace(/\|.+\|[\s\S]*?(?=\n\n|\n##|\n>|$)/g, '[table removed — see live data]');
-  // Remove long numbered/bullet lists that likely contained data rows
-  const lines = content.split('\n');
-  if (lines.length > 15) {
-    content = lines.slice(0, 6).join('\n') + '\n[... prior response truncated to prevent stale data ...]';
-  }
-  return { ...msg, content };
+// Strip all markdown tables, bullet-data blocks, and numbered data rows from
+// old assistant messages. The live DATA CONTEXT is the only source of facts —
+// history is kept only so the bot understands what was ASKED, not what was answered.
+function stripDataFromAssistantMsg(content) {
+  return content
+    // Remove markdown tables entirely
+    .replace(/^\|.+$/gm, '')
+    // Remove numbered list rows that look like data (e.g. "1. John | 10192 | ...")
+    .replace(/^\d+\.\s.{40,}$/gm, '')
+    // Remove bullet rows that look like data
+    .replace(/^[-*]\s.{60,}$/gm, '')
+    // Collapse excess blank lines
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+    // If still very long, keep first 400 chars
+    .slice(0, 400);
 }
 
 function buildApiMessages(allMessages) {
@@ -277,10 +280,15 @@ function buildApiMessages(allMessages) {
   const windowed = filtered.length > MEMORY_WINDOW
     ? [filtered[0], ...filtered.slice(-(MEMORY_WINDOW - 1))]
     : filtered;
-  // Sanitize older messages (keep the latest 2 intact for follow-up context)
-  return windowed.map((m, i) =>
-    i < windowed.length - 2 ? sanitizeHistoryMessage(m) : { role: m.role, content: m.content }
-  );
+
+  return windowed.map((m, i) => {
+    if (m.role !== 'assistant') return { role: m.role, content: m.content };
+    // Keep the very last bot message as-is (follow-up context)
+    if (i === windowed.length - 1) return { role: 'assistant', content: m.content };
+    // All older bot messages: strip tables and data — bot will re-derive from live DATA CONTEXT
+    const stripped = stripDataFromAssistantMsg(m.content);
+    return { role: 'assistant', content: stripped || '[previous response — re-derive from DATA CONTEXT]' };
+  });
 }
 
 // ─── Live data fetcher ────────────────────────────────────────────────────────
@@ -344,33 +352,45 @@ export default function BotPage() {
 
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
+  // Always holds the latest department — handleSend reads this to avoid stale closure
+  const departmentRef = useRef(null);
+  useEffect(() => { departmentRef.current = department; }, [department]);
 
   useEffect(() => {
-    const init = async () => {
-      setPageLoading(true);
-      try {
-        const dept = await getDepartment(deptId);
-        if (!dept) { navigate('/dashboard'); return; }
-        setDepartment(dept);
+    setPageLoading(true);
+    let historyLoaded = false;
 
-        const history = await getChatHistory(user.uid, deptId);
-        if (history.length > 0) {
-          setMessages(history);
-        } else {
-          setMessages([{
-            role: 'assistant',
-            content: `Hello! I'm the **${dept.name}** AI assistant.\n\nI can help you analyze data, answer questions, and generate downloadable reports.\n\nTip: Ask me to "generate an Excel report" or "create a PDF summary" and I'll build a formatted file for you!\n\nHow can I help you today?`,
-            timestamp: Date.now(),
-          }]);
+    // Real-time subscription — if admin changes data sources, this fires instantly
+    const unsub = subscribeToDepartment(deptId, async (dept) => {
+      if (!dept) { navigate('/dashboard'); return; }
+      setDepartment(dept);
+
+      // Load chat history only once (on first snapshot)
+      if (!historyLoaded) {
+        historyLoaded = true;
+        try {
+          const history = await getChatHistory(user.uid, deptId);
+          if (history.length > 0) {
+            setMessages(history);
+          } else {
+            setMessages([{
+              role: 'assistant',
+              content: `Hello! I'm the **${dept.name}** AI assistant.\n\nI can help you analyze data, answer questions, and generate downloadable reports.\n\nTip: Ask me to "generate an Excel report" or "create a PDF summary" and I'll build a formatted file for you!\n\nHow can I help you today?`,
+              timestamp: Date.now(),
+            }]);
+          }
+          await loadDataSources(dept);
+        } catch {
+          toast.error('Failed to load bot');
+        } finally {
+          setPageLoading(false);
         }
-        await loadDataSources(dept);
-      } catch {
-        toast.error('Failed to load bot');
-      } finally {
-        setPageLoading(false);
       }
-    };
-    init();
+      // On subsequent snapshots (admin updated dept): dataLoaded badge refreshes,
+      // next query auto-fetches from new data source (fetchDeptContext uses dept state)
+    });
+
+    return () => unsub();
   }, [deptId, user.uid]);
 
   useEffect(() => {
@@ -395,8 +415,9 @@ export default function BotPage() {
   }, [messages]);
 
   const handleSend = useCallback(async (text) => {
+    const dept = departmentRef.current; // always latest — updated by real-time subscription
     const userMsg = text || input.trim();
-    if (!userMsg || loading || !department) return;
+    if (!userMsg || loading || !dept) return;
     setInput('');
 
     const userMessage = { role: 'user', content: userMsg, timestamp: Date.now() };
@@ -408,23 +429,23 @@ export default function BotPage() {
       const apiMessages = buildApiMessages(newMessages);
       const wantsFile = isFileRequest(userMsg);
 
-      // Always fetch live data from the sheet before answering
+      // Fetch live data from the sheet — always fresh, never cached
       setSyncing(true);
-      const freshContext = await fetchDeptContext(department, googleToken);
+      const freshContext = await fetchDeptContext(dept, googleToken);
       setSyncing(false);
       setDataContext(freshContext);
 
       if (wantsFile) {
         const [reply, fileData] = await Promise.all([
           chatWithBot({
-            systemPrompt: department.systemPrompt || `You are the AI assistant for ${department.name}.`,
+            systemPrompt: dept.systemPrompt || `You are the AI assistant for ${dept.name}.`,
             messages: apiMessages,
             dataContext: freshContext,
           }),
           generateFileData({
             userRequest: userMsg,
-            dataContext: freshContext || `Department: ${department.name}\nDescription: ${department.description}`,
-            departmentName: department.name,
+            dataContext: freshContext || `Department: ${dept.name}\nDescription: ${dept.description}`,
+            departmentName: dept.name,
           }).catch(() => null),
         ]);
 
@@ -442,7 +463,7 @@ export default function BotPage() {
         }));
       } else {
         const reply = await chatWithBot({
-          systemPrompt: department.systemPrompt || `You are the AI assistant for ${department.name}.`,
+          systemPrompt: dept.systemPrompt || `You are the AI assistant for ${dept.name}.`,
           messages: apiMessages,
           dataContext: freshContext,
         });
@@ -466,7 +487,7 @@ export default function BotPage() {
       setLoading(false);
       inputRef.current?.focus();
     }
-  }, [input, messages, loading, department, googleToken, user.uid, deptId]);
+  }, [input, messages, loading, googleToken, user.uid, deptId]);
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -478,7 +499,7 @@ export default function BotPage() {
   const clearChat = async () => {
     const welcome = [{
       role: 'assistant',
-      content: `Chat cleared. Hello again! I'm your ${department?.name} assistant. How can I help you?`,
+      content: `Chat cleared. Hello again! I'm your ${departmentRef.current?.name} assistant. How can I help you?`,
       timestamp: Date.now(),
     }];
     setMessages(welcome);
@@ -620,7 +641,7 @@ export default function BotPage() {
         <VoiceMode
           department={department}
           messages={messages}
-          getDataContext={() => fetchDeptContext(department, googleToken)}
+          getDataContext={() => fetchDeptContext(departmentRef.current, googleToken)}
           onClose={() => setVoiceMode(false)}
           onVoiceMessage={handleVoiceMessage}
         />
