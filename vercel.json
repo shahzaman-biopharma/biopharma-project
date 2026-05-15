@@ -6,7 +6,9 @@
     "api/telegram.js": { "maxDuration": 60 },
     "api/cron-reports.js": { "maxDuration": 300 },
     "api/fetch-excel.js": { "maxDuration": 30 },
-    "api/sheets.js": { "maxDuration": 30 }
+    "api/sheets.js": { "maxDuration": 30 },
+    "api/ms-auth.js": { "maxDuration": 10 },
+    "api/ms-callback.js": { "maxDuration": 15 }
   },
   "crons": [
     {

@@ -1006,6 +1006,44 @@ export default function SettingsPage() {
         /* ─── DEPARTMENTS TAB ─── */
         <div>
 
+          {/* ── Microsoft OneDrive Connection Card ── */}
+          {isSuperAdmin && (
+            <div className="mb-5 p-4 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                    <svg width="18" height="18" viewBox="0 0 23 23" fill="none">
+                      <rect x="1" y="1" width="10" height="10" rx="1" fill="#f25022"/>
+                      <rect x="12" y="1" width="10" height="10" rx="1" fill="#7fba00"/>
+                      <rect x="1" y="12" width="10" height="10" rx="1" fill="#00a4ef"/>
+                      <rect x="12" y="12" width="10" height="10" rx="1" fill="#ffb900"/>
+                    </svg>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-slate-200">Microsoft OneDrive / Excel</p>
+                    <p className="text-xs mt-0.5 text-slate-500">
+                      One-time login → permanent access to private Excel files. No 1-hour expiry.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <a
+                    href="/api/ms-auth"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all"
+                    style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', color: '#60a5fa', textDecoration: 'none' }}
+                  >
+                    <Globe size={13} /> Connect / Refresh Token
+                  </a>
+                </div>
+              </div>
+              <p className="text-xs text-slate-600 mt-2 pl-[52px]">
+                After connecting, copy the refresh token to <strong className="text-slate-500">Vercel → Environment Variables → MICROSOFT_REFRESH_TOKEN</strong>, then redeploy.
+              </p>
+            </div>
+          )}
 
           {!showForm && (
             <div className="flex justify-end mb-4">
