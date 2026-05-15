@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { subscribeToDepartment } from '../services/firestore';
+import { subscribeToDepartment, getChatHistory, saveChatMessage } from '../services/firestore';
 import { chatWithBot, generateFileData } from '../services/openai';
 import { fetchGoogleSheetData } from '../services/excel';
 import {
@@ -315,11 +315,16 @@ export default function BotPage() {
       if (!historyLoaded) {
         historyLoaded = true;
         try {
-          setMessages([{
-            role: 'assistant',
-            content: `Hello! I'm the **${dept.name}** AI assistant.\n\nI can help you analyze data, answer questions, and generate downloadable reports.\n\nTip: Ask me to "generate an Excel report" or "create a PDF summary" and I'll build a formatted file for you!\n\nHow can I help you today?`,
-            timestamp: Date.now(),
-          }]);
+          const history = await getChatHistory(user.uid, deptId);
+          if (history.length > 0) {
+            setMessages(history);
+          } else {
+            setMessages([{
+              role: 'assistant',
+              content: `Hello! I'm the **${dept.name}** AI assistant.\n\nI can help you analyze data, answer questions, and generate downloadable reports.\n\nTip: Ask me to "generate an Excel report" or "create a PDF summary" and I'll build a formatted file for you!\n\nHow can I help you today?`,
+              timestamp: Date.now(),
+            }]);
+          }
           await loadDataSources(dept);
         } catch {
           toast.error('Failed to load bot');
@@ -381,13 +386,20 @@ export default function BotPage() {
             departmentName: dept.name,
           }).catch(() => null),
         ]);
-        setMessages(prev => [...prev, {
-          role: 'assistant', content: reply, timestamp: Date.now(),
-          fileData: fileData || undefined,
-        }]);
+        const botMsg = { role: 'assistant', content: reply, timestamp: Date.now(), fileData: fileData || undefined };
+        setMessages(prev => {
+          const next = [...prev, botMsg];
+          saveChatMessage(user.uid, deptId, next.map(({ fileData: _, ...m }) => m)).catch(() => {});
+          return next;
+        });
       } else {
         const reply = await chatWithBot({ systemPrompt, userMessage: userMsg, dataContext: freshContext });
-        setMessages(prev => [...prev, { role: 'assistant', content: reply, timestamp: Date.now() }]);
+        const botMsg = { role: 'assistant', content: reply, timestamp: Date.now() };
+        setMessages(prev => {
+          const next = [...prev, botMsg];
+          saveChatMessage(user.uid, deptId, next).catch(() => {});
+          return next;
+        });
       }
     } catch (err) {
       setSyncing(false);
@@ -414,21 +426,27 @@ export default function BotPage() {
   };
 
   const clearChat = () => {
-    setMessages([{
+    const welcome = [{
       role: 'assistant',
       content: `Chat cleared. Hello again! I'm your ${departmentRef.current?.name} assistant. How can I help you?`,
       timestamp: Date.now(),
-    }]);
+    }];
+    setMessages(welcome);
+    saveChatMessage(user.uid, deptId, welcome).catch(() => {});
     toast.success('Chat cleared');
   };
 
   const handleVoiceMessage = useCallback((userText, botText) => {
-    setMessages(prev => [
-      ...prev,
-      { role: 'user', content: userText, timestamp: Date.now() },
-      { role: 'assistant', content: botText, timestamp: Date.now() },
-    ]);
-  }, []);
+    setMessages(prev => {
+      const next = [
+        ...prev,
+        { role: 'user', content: userText, timestamp: Date.now() },
+        { role: 'assistant', content: botText, timestamp: Date.now() },
+      ];
+      saveChatMessage(user.uid, deptId, next).catch(() => {});
+      return next;
+    });
+  }, [user.uid, deptId]);
 
   if (pageLoading) {
     return (
