@@ -81,3 +81,37 @@ export async function fetchGoogleSheetData(url) {
   (data.sheets || []).forEach(({ name, rows }) => { sheets[name] = rows; });
   return { text: sheetsToText(sheets), sheetNames: data.sheetNames || [] };
 }
+
+// ─── Raw sheet data for dashboard (returns rows[][], not text) ───────────────
+
+async function fetchOneDriveRaw(url) {
+  const res = await fetch(`/api/fetch-excel?url=${encodeURIComponent(url)}`);
+  if (!res.ok) {
+    let msg = `OneDrive access failed (${res.status}).`;
+    try { const j = await res.json(); msg = j.error || msg; } catch {}
+    throw new Error(msg);
+  }
+  const arrayBuffer = await (await res.blob()).arrayBuffer();
+  const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+  const sheets = {};
+  workbook.SheetNames.forEach(name => {
+    sheets[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+  });
+  return { sheets, sheetNames: workbook.SheetNames };
+}
+
+export async function fetchGoogleSheetRaw(url) {
+  if (isOneDriveUrl(url)) return fetchOneDriveRaw(url);
+
+  const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!match) throw new Error('Invalid Google Sheets URL');
+  const sheetId = match[1];
+
+  const res = await fetch(`/api/sheets?sheetId=${sheetId}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch sheet');
+
+  const sheets = {};
+  (data.sheets || []).forEach(({ name, rows }) => { sheets[name] = rows; });
+  return { sheets, sheetNames: data.sheetNames || [] };
+}

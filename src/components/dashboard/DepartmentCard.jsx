@@ -16,7 +16,7 @@ export default function DepartmentCard({ department, onClick }) {
 
   const handleClick = () => {
     if (onClick) onClick(department);
-    navigate(`/bot/${department.id}`);
+    navigate(`/dept/${department.id}`);
   };
 
   return (
@@ -71,7 +71,7 @@ export default function DepartmentCard({ department, onClick }) {
 
       {/* CTA */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium" style={{ color: colors.from }}>Open Bot Chat</span>
+        <span className="text-xs font-medium" style={{ color: colors.from }}>Open Dashboard</span>
         <ChevronRight size={16} style={{ color: colors.from }} className="group-hover:translate-x-1 transition-transform" />
       </div>
     </div>

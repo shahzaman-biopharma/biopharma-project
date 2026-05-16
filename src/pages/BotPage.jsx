@@ -7,7 +7,7 @@ import { fetchGoogleSheetData } from '../services/excel';
 import {
   ArrowLeft, Send, Bot, User, Loader2,
   Database, RefreshCw, Sparkles,
-  FileSpreadsheet, FileDown, Table2, Mic,
+  FileSpreadsheet, FileDown, Table2, Mic, BarChart2,
 } from 'lucide-react';
 import VoiceMode from '../components/common/VoiceMode';
 import toast from 'react-hot-toast';
@@ -554,6 +554,33 @@ export default function BotPage() {
           Enter to send • Shift+Enter for new line • Ask for PDF/Excel to download files
         </p>
       </div>
+
+      {/* ── Floating Dashboard Icon ── */}
+      <button
+        onClick={() => navigate(`/dept/${deptId}`)}
+        title="Open Dashboard"
+        style={{
+          position: 'fixed',
+          bottom: 24,
+          right: 24,
+          width: 48,
+          height: 48,
+          borderRadius: '50%',
+          background: 'linear-gradient(135deg, #10b981, #06b6d4)',
+          border: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 4px 20px rgba(16,185,129,0.4)',
+          zIndex: 50,
+          transition: 'transform 0.2s, box-shadow 0.2s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.1)'; e.currentTarget.style.boxShadow = '0 6px 26px rgba(16,185,129,0.6)'; }}
+        onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(16,185,129,0.4)'; }}
+      >
+        <BarChart2 size={20} color="white" />
+      </button>
 
       {/* ── Voice Mode overlay ── */}
       {voiceMode && (

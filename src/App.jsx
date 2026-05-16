@@ -11,6 +11,7 @@ import BotPage from './pages/BotPage';
 import ReportsPage from './pages/ReportsPage';
 import NotificationsPage from './pages/NotificationsPage';
 import SettingsPage from './pages/SettingsPage';
+import DeptDashboardPage from './pages/DeptDashboardPage';
 
 export default function App() {
   return (
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="/signup" element={<SignupPage />} />
             <Route element={<Layout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/dept/:deptId" element={<DeptDashboardPage />} />
               <Route path="/bot/:deptId" element={<BotPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
