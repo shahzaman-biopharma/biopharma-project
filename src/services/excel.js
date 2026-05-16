@@ -65,6 +65,15 @@ async function fetchOneDriveData(url) {
 }
 
 // ─── Google Sheets via Service Account (server-side proxy, no token expiry) ──
+// Detects rtpof=true (Excel file uploaded to Google Drive) and uses Drive API.
+
+function isGoogleDriveExcel(url) {
+  return /spreadsheets\/d\//.test(url) && url.includes('rtpof=true');
+}
+
+function buildSheetsApiUrl(sheetId, isExcel) {
+  return `/api/sheets?sheetId=${sheetId}${isExcel ? '&excel=1' : ''}`;
+}
 
 export async function fetchGoogleSheetData(url) {
   if (isOneDriveUrl(url)) return fetchOneDriveData(url);
@@ -72,8 +81,9 @@ export async function fetchGoogleSheetData(url) {
   const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (!match) throw new Error('Invalid Google Sheets URL');
   const sheetId = match[1];
+  const isExcel = isGoogleDriveExcel(url);
 
-  const res = await fetch(`/api/sheets?sheetId=${sheetId}`);
+  const res = await fetch(buildSheetsApiUrl(sheetId, isExcel));
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to fetch sheet');
 
@@ -106,8 +116,9 @@ export async function fetchGoogleSheetRaw(url) {
   const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (!match) throw new Error('Invalid Google Sheets URL');
   const sheetId = match[1];
+  const isExcel = isGoogleDriveExcel(url);
 
-  const res = await fetch(`/api/sheets?sheetId=${sheetId}`);
+  const res = await fetch(buildSheetsApiUrl(sheetId, isExcel));
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to fetch sheet');
 
