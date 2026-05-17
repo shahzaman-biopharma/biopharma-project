@@ -109,8 +109,8 @@ async function tryCreate(params) {
         e.status = 429;
         throw e;
       }
-      // 404 = model not found → try next model in chain
-      if (status === 404) continue;
+      // 404 / 400 = model not found or not available → try next model in chain
+      if (status === 404 || status === 400) continue;
       // Any other error → throw immediately
       throw err;
     }
