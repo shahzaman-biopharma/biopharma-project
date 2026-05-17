@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { subscribeToDepartments } from '../services/firestore';
-import { ensureDVLDepartment } from '../utils/seedDVL';
+import { ensureDVLDepartment, ensureDVLvDepartment } from '../utils/seedDVL';
 import DepartmentCard from '../components/dashboard/DepartmentCard';
 import DashboardChatBar from '../components/dashboard/DashboardChatBar';
 import { Bot, Plus, Shield, Sparkles, TrendingUp, FileText } from 'lucide-react';
@@ -29,7 +29,10 @@ export default function DashboardPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isSuperAdmin) ensureDVLDepartment();
+    if (isSuperAdmin) {
+      ensureDVLDepartment();
+      ensureDVLvDepartment();
+    }
   }, [isSuperAdmin]);
 
   useEffect(() => {

@@ -311,4 +311,95 @@ Rules:
   }
 }
 
+// ─── Compact DVL spec (reference example shown to GPT) ───────────────────────
+const DVL_REFERENCE_SPEC = `{"theme":{"accent":"#5a7dff","accent2":"#8b5cf6"},"header":{"title":"DVL Validation Console","subtitle":"BIRC · Q1 2026","badge":"Engine Active","badgeColor":"#3ddc97","icon":"shield-check"},"stats":[{"label":"Total Records","value":"275","sub":"273 validated","icon":"database","color":"#7aa2ff"},{"label":"Mismatches","value":"30","sub":"month+structural","icon":"activity","color":"#ffb648"},{"label":"Projection Accuracy","value":"93%","sub":"vs monthly goals","icon":"trending-up","color":"#3ddc97"}],"tabs":[{"id":"overview","label":"Overview","rows":[{"cols":2,"widgets":[{"type":"bar","title":"Month DVL vs Projection","xKey":"month","series":[{"key":"dvl","label":"DVL Actual","color":"#5a7dff"},{"key":"proj","label":"Proj Goal","color":"#3ddc97"}],"data":[{"month":"Jan","dvl":96,"proj":70},{"month":"Feb","dvl":72,"proj":71}],"footer":{"type":"delta","items":[{"label":"Jan","delta":26,"status":"Critical"},{"label":"Feb","delta":1,"status":"Pass"}]}},{"type":"hbar","title":"Visit Distribution","valueKey":"v","data":[{"name":"Screening","v":67},{"name":"Follow Up","v":62}]}]},{"cols":2,"widgets":[{"type":"gauge","title":"Projection Accuracy","value":93,"color":"#3ddc97","suffix":"%","desc":"Q1 2026 goal closeness"},{"type":"line","title":"Subjects/Month","xKey":"m","series":[{"key":"s","label":"Subjects","color":"#7aa2ff"}],"data":[{"m":"Jan","s":59},{"m":"Feb","s":61}]}]}]},{"id":"alerts","label":"Critical Alerts","rows":[{"cols":1,"widgets":[{"type":"alerts","items":[{"severity":"Critical","title":"31 duplicate visit keys","where":"BIRC Jan-Mar","msg":"Same Subject+Protocol+Date+Visit repeated"},{"severity":"Warning","title":"Screening under-target","where":"Q1 BIRC","msg":"67 of 148 goal (45%)"}]},{"type":"note","title":"Recommended Fixes","items":["De-duplicate the 31 repeated visit keys","Complete the 2 incomplete records"]}]}]}]}`;
+
+export async function generateDashboardSpec({ name, tag, description, businessContext, systemPrompt, dataSourceNames, sheetSummaries }) {
+  const formatSummaries = (summaries) => {
+    if (!summaries || !summaries.length) return 'No data sources connected.';
+    return summaries.map(s => {
+      const numCols = s.colStats?.filter(c => c.type === 'numeric').map(c =>
+        `    ${c.header}: sum=${c.sum}, min=${c.min}, max=${c.max}, avg=${c.avg}, count=${c.count}`
+      ).join('\n') || '';
+      const catCols = s.colStats?.filter(c => c.type === 'categorical').map(c =>
+        `    ${c.header}: ${c.totalUnique} unique values, top=[${(c.topValues || []).slice(0, 5).join(', ')}]`
+      ).join('\n') || '';
+      return `  [${s.sourceName || 'Data'} › ${s.sheetName}] — ${s.totalRows} rows\n${numCols ? '  Numeric columns:\n' + numCols : ''}${catCols ? '\n  Categorical columns:\n' + catCols : ''}`;
+    }).join('\n\n');
+  };
+
+  const prompt = `You are a data analyst dashboard designer for a biopharma CRA analytics platform.
+
+REFERENCE EXAMPLE (DVL Validation Department — match this quality and format for your output):
+${DVL_REFERENCE_SPEC}
+
+YOUR TASK: Generate a dashboardSpec JSON for the new department below. Use REAL numbers computed from the DATA SUMMARIES. Never fabricate data.
+
+DEPARTMENT INFO:
+Name: ${name}
+Tag: ${tag || ''}
+Description: ${description}
+Business Context: ${businessContext}
+System Prompt Focus: ${systemPrompt}
+Data Sources: ${(dataSourceNames || []).join(', ') || 'None connected'}
+
+DATA SUMMARIES (real computed stats from each sheet — use these exact numbers in charts/stats):
+${formatSummaries(sheetSummaries)}
+
+SPEC SCHEMA (follow exactly):
+{
+  "theme": {"accent":"#hex","accent2":"#hex"},
+  "header": {"title":"string","subtitle":"string","badge":"string","badgeColor":"#hex","icon":"shield-check|database|activity|bar-chart|trending-up|layers|target|users|zap"},
+  "stats": [{"label":"string","value":"string","sub":"string","icon":"string","color":"#hex"}],
+  "tabs": [{"id":"string","label":"string","rows":[{"cols":1|2,"widgets":[WIDGET]}]}]
+}
+
+WIDGET types (use as needed):
+{"type":"bar","title":"","xKey":"fieldName","series":[{"key":"","label":"","color":"#hex"}],"data":[{xKey:val,...}],"footer":{"type":"delta","items":[{"label":"","delta":0,"status":"Critical|Warning|Minor|Pass"}]}}
+{"type":"hbar","title":"","valueKey":"v","data":[{"name":"","v":0}]}
+{"type":"line","title":"","xKey":"","series":[{"key":"","label":"","color":"#hex"}],"data":[{...}]}
+{"type":"gauge","title":"","value":0,"color":"#hex","desc":"","suffix":"%"}
+{"type":"table","title":"","desc":"","columns":[{"key":"","label":"","mono":false,"colored":false,"cellType":"progress|pill"}],"rows":[{...}],"note":""}
+{"type":"alerts","items":[{"severity":"Critical|Warning|Minor|Pass","title":"","where":"","msg":""}]}
+{"type":"cards","title":"","items":[{"status":"","title":"","scope":"","detail":""}]}
+{"type":"note","title":"","items":["string"]}
+
+RULES:
+1. Use ONLY numbers from DATA SUMMARIES — if no data, use reasonable placeholder values but mark them as estimates
+2. Choose accent colors: red=#e15f5f for validation/errors, blue=#5b8def for analytics, green=#5fb878 for clinical, amber=#e8a838 for finance/projections
+3. For validation/reconciliation: include Overview, Reconciliation/Comparison, and Alerts tabs
+4. For analytics/reporting: include Overview, KPIs/Trends, and Data Detail tabs
+5. Include 3-5 stat cards with meaningful values from the data
+6. Use cols:2 for chart pairs, cols:1 for tables/alerts
+7. Make charts use real column names and values from summaries
+8. Icon options for stats: database, activity, trending-up, layers, file-warning, target, users, shield-check
+
+Return ONLY valid JSON — no markdown, no explanation, no \`\`\`.`;
+
+  const response = await tryCreate({
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.3,
+    max_tokens: 4000,
+  });
+
+  const raw = response.choices[0].message.content.trim()
+    .replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '');
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // If JSON is malformed, try to extract the JSON object
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) {
+      try { return JSON.parse(match[0]); } catch {}
+    }
+    // Return a minimal fallback spec
+    return {
+      theme: { accent: '#5b8def', accent2: '#8b5cf6' },
+      header: { title: name, subtitle: 'Analytics Dashboard', badge: 'Active', badgeColor: '#3ddc97', icon: 'bar-chart' },
+      stats: [{ label: 'Department', value: name, sub: 'Analytics ready', icon: 'database', color: '#5b8def' }],
+      tabs: [{ id: 'overview', label: 'Overview', rows: [{ cols: 1, widgets: [{ type: 'note', title: 'Dashboard Ready', items: ['Connect data sources and re-analyze to see full analytics.'] }] }] }],
+    };
+  }
+}
+
 export default openai;

@@ -1,18 +1,21 @@
-import { Bot, ChevronRight, Database, Users, Activity } from 'lucide-react';
+import { Bot, ChevronRight, Database, Users, Activity, Settings, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const DEPT_COLORS = {
-  DVL: { from: '#3b82f6', to: '#06b6d4', glow: 'rgba(59,130,246,0.2)' },
-  QC: { from: '#8b5cf6', to: '#6366f1', glow: 'rgba(139,92,246,0.2)' },
-  CRM: { from: '#10b981', to: '#06b6d4', glow: 'rgba(16,185,129,0.2)' },
-  REG: { from: '#f59e0b', to: '#ef4444', glow: 'rgba(245,158,11,0.2)' },
+  DVL:  { from: '#3b82f6', to: '#06b6d4', glow: 'rgba(59,130,246,0.2)' },
+  DVLv: { from: '#5a7dff', to: '#8b5cf6', glow: 'rgba(90,125,255,0.2)' },
+  QC:   { from: '#8b5cf6', to: '#6366f1', glow: 'rgba(139,92,246,0.2)' },
+  CRM:  { from: '#10b981', to: '#06b6d4', glow: 'rgba(16,185,129,0.2)' },
+  REG:  { from: '#f59e0b', to: '#ef4444', glow: 'rgba(245,158,11,0.2)' },
   DEFAULT: { from: '#3b82f6', to: '#8b5cf6', glow: 'rgba(59,130,246,0.2)' },
 };
 
 export default function DepartmentCard({ department, onClick }) {
   const navigate = useNavigate();
-  const tag = department.tag || department.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3);
+  const tag = department.tag || department.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 4);
   const colors = DEPT_COLORS[tag] || DEPT_COLORS.DEFAULT;
+  const isAnalyzing = department.dashboardStatus === 'analyzing' || department.dashboardStatus === 'pending';
+  const hasCustom = department.dashboardStatus === 'ready';
 
   const handleClick = () => {
     if (onClick) onClick(department);
@@ -29,9 +32,28 @@ export default function DepartmentCard({ department, onClick }) {
       <div className="absolute top-0 left-0 right-0 h-0.5"
         style={{ background: `linear-gradient(90deg, ${colors.from}, ${colors.to})` }} />
 
-      {/* Glow effect on hover */}
+      {/* Glow on hover */}
       <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl pointer-events-none"
         style={{ background: `radial-gradient(circle at 50% 0%, ${colors.glow}, transparent 70%)` }} />
+
+      {/* Analyzing overlay */}
+      {isAnalyzing && (
+        <div className="absolute inset-0 rounded-2xl z-10 flex flex-col items-center justify-center gap-2"
+          style={{ background: 'rgba(10,12,20,0.82)', backdropFilter: 'blur(4px)' }}>
+          <div style={{ width: 42, height: 42, borderRadius: '50%', background: `${colors.from}22`, border: `1px solid ${colors.from}44`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Settings size={20} style={{ color: colors.from, animation: 'spin 2s linear infinite' }} />
+          </div>
+          <p style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', fontWeight: 600, letterSpacing: '.04em', margin: 0 }}>
+            Building Dashboard…
+          </p>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            {[0, 1, 2].map(i => (
+              <div key={i} style={{ width: 5, height: 5, borderRadius: '50%', background: colors.from, animation: `pulse 1.2s ${i * 0.2}s ease-in-out infinite` }} />
+            ))}
+          </div>
+          <style>{`@keyframes pulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}`}</style>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-start justify-between mb-4 relative">
@@ -44,7 +66,10 @@ export default function DepartmentCard({ department, onClick }) {
         </div>
         <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
           style={{ background: `linear-gradient(135deg, ${colors.from}33, ${colors.to}22)`, border: `1px solid ${colors.from}33` }}>
-          <Bot size={18} style={{ color: colors.from }} />
+          {isAnalyzing
+            ? <Loader2 size={18} style={{ color: colors.from, animation: 'spin 1s linear infinite' }} />
+            : <Bot size={18} style={{ color: colors.from }} />
+          }
         </div>
       </div>
 
@@ -64,14 +89,18 @@ export default function DepartmentCard({ department, onClick }) {
           <span>{department.assignedUsers?.length || 0} users</span>
         </div>
         <div className="flex items-center gap-1">
-          <Activity size={12} className="text-green-400" />
-          <span className="text-green-400">Active</span>
+          {isAnalyzing
+            ? <><Settings size={12} className="text-blue-400" style={{ animation: 'spin 2s linear infinite' }} /><span className="text-blue-400">Analyzing</span></>
+            : <><Activity size={12} className="text-green-400" /><span className="text-green-400">{hasCustom ? 'Custom UI' : 'Active'}</span></>
+          }
         </div>
       </div>
 
       {/* CTA */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium" style={{ color: colors.from }}>Open Dashboard</span>
+        <span className="text-xs font-medium" style={{ color: colors.from }}>
+          {isAnalyzing ? 'Building dashboard…' : hasCustom ? 'Open Custom Dashboard' : 'Open Dashboard'}
+        </span>
         <ChevronRight size={16} style={{ color: colors.from }} className="group-hover:translate-x-1 transition-transform" />
       </div>
     </div>

@@ -8,7 +8,8 @@ import {
   createNotification,
   updateDeptUserPermission, getAdminTabPermissions, saveAdminTabPermissions,
 } from '../services/firestore';
-import { generateDepartmentPrompt, generateDashboardConfig } from '../services/openai';
+import { generateDepartmentPrompt } from '../services/openai';
+import { analyzeAndBuildDashboard } from '../utils/analyzeAndBuildDashboard';
 import {
   Settings, Plus, Trash2, Edit2, Users, Bot, Database, Save,
   Loader2, X, Shield, UserPlus, ChevronDown, ChevronUp,
@@ -725,13 +726,9 @@ export default function SettingsPage() {
 
   const handleSaveDept = async (form) => {
     if (editingDept) {
-      await updateDepartment(editingDept.id, form);
-      // Re-generate dashboard config whenever dept is edited and saved
-      generateDashboardConfig({
-        name: form.name, description: form.description,
-        businessContext: form.businessContext, systemPrompt: form.systemPrompt,
-        dataSources: form.dataSources || [],
-      }).then(cfg => updateDepartment(editingDept.id, { dashboardConfig: cfg })).catch(() => {});
+      await updateDepartment(editingDept.id, { ...form, dashboardStatus: 'pending' });
+      // Re-analyze and rebuild custom dashboard in background
+      analyzeAndBuildDashboard(form, editingDept.id).catch(() => {});
       // Update assigned users in their profiles
       const oldAssigned = editingDept.assignedUsers || [];
       const newAssigned = form.assignedUsers || [];
@@ -774,13 +771,9 @@ export default function SettingsPage() {
         }
       }
     } else {
-      const ref = await createDepartment(form);
-      // Generate custom dashboard config via GPT (runs async, saves to Firestore when ready)
-      generateDashboardConfig({
-        name: form.name, description: form.description,
-        businessContext: form.businessContext, systemPrompt: form.systemPrompt,
-        dataSources: form.dataSources || [],
-      }).then(cfg => updateDepartment(ref.id, { dashboardConfig: cfg })).catch(() => {});
+      const ref = await createDepartment({ ...form, dashboardStatus: 'pending' });
+      // Analyze data sources and build custom dashboard in background
+      analyzeAndBuildDashboard(form, ref.id).catch(() => {});
       // Assign dept to selected users
       for (const uid of form.assignedUsers || []) {
         const u = users.find(u => u.id === uid);

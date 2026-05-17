@@ -1,8 +1,10 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { subscribeToDepartment } from '../services/firestore';
+import { subscribeToDepartment, updateDepartment } from '../services/firestore';
 import { fetchGoogleSheetRaw } from '../services/excel';
+import CustomDashboard from '../components/CustomDashboard';
+import { analyzeAndBuildDashboard } from '../utils/analyzeAndBuildDashboard';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -227,6 +229,17 @@ export default function DeptDashboardPage() {
     if (config?.defaultChartType) setChartType(config.defaultChartType);
   }, [config?.defaultChartType]);
 
+  // Re-trigger analysis if dashboard is pending or got stuck in 'analyzing'
+  const analysisStartedRef = useRef(false);
+  useEffect(() => {
+    if (!department || analysisStartedRef.current) return;
+    const status = department.dashboardStatus;
+    if (status === 'pending' || status === 'analyzing' || status === 'error') {
+      analysisStartedRef.current = true;
+      analyzeAndBuildDashboard(department, deptId).catch(() => { analysisStartedRef.current = false; });
+    }
+  }, [department?.dashboardStatus, department?.id]);
+
   const fetchData = useCallback(async (dept) => {
     if (!dept?.dataSources?.length) {
       setAllSheets([]);
@@ -304,6 +317,94 @@ export default function DeptDashboardPage() {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', background: C.bg }}>
         <Loader2 size={26} style={{ animation: 'spin 1s linear infinite', color: C.blue }} />
+      </div>
+    );
+  }
+
+  const dashStatus = department?.dashboardStatus;
+  const isAnalyzing = dashStatus === 'analyzing' || dashStatus === 'pending';
+  const hasCustom   = dashStatus === 'ready' && department?.dashboardSpec;
+
+  const sharedHeader = (onRefresh, refreshing) => (
+    <div style={{ background: `linear-gradient(180deg,${C.panel},${C.bg})`, borderBottom: `1px solid ${C.line}`, padding: '14px 22px', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, zIndex: 20 }}>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+      <button className="dd-btn" onClick={() => navigate('/dashboard')}
+        style={{ border: `1px solid ${C.line}`, borderRadius: 8, padding: '6px 9px', color: C.sub, display: 'flex', alignItems: 'center' }}>
+        <ArrowLeft size={15} />
+      </button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: 15, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{department?.name}</div>
+        <div style={{ fontSize: 11, color: C.sub, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+          {isAnalyzing ? 'Building custom dashboard…' : hasCustom ? 'Custom Dashboard' : 'Analytics Dashboard'}
+        </div>
+      </div>
+      {onRefresh && (
+        <button className="dd-btn" onClick={onRefresh} disabled={refreshing} title={hasCustom ? 'Re-analyze' : 'Refresh data'}
+          style={{ border: `1px solid ${C.line}`, borderRadius: 8, padding: '6px 9px', color: C.sub, display: 'flex', alignItems: 'center', opacity: refreshing ? 0.5 : 1 }}>
+          <RefreshCw size={14} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
+        </button>
+      )}
+    </div>
+  );
+
+  // ── Custom dashboard (GPT-generated spec) ──────────────────────────────
+  if (hasCustom) {
+    return (
+      <div style={{ background: '#0a0c14', minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+        <style>{`.dd-btn{background:transparent;cursor:pointer;transition:background .15s}.dd-btn:hover{background:rgba(255,255,255,.06)}`}</style>
+        {sharedHeader(() => {
+          analysisStartedRef.current = false;
+          updateDepartment(deptId, { dashboardStatus: 'pending' })
+            .then(() => analyzeAndBuildDashboard(department, deptId))
+            .catch(() => {});
+        }, false)}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <CustomDashboard spec={department.dashboardSpec} departmentName={department?.name} />
+        </div>
+        <motion.button onClick={() => navigate(`/bot/${deptId}`)} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}
+          style={{ position: 'fixed', bottom: 24, right: 24, width: 52, height: 52, borderRadius: '50%', background: `linear-gradient(135deg,${C.blue},#6366f1)`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 22px rgba(91,141,239,0.5)', zIndex: 50 }}>
+          <Bot size={22} color="white" />
+        </motion.button>
+      </div>
+    );
+  }
+
+  // ── Analyzing / building state ─────────────────────────────────────────
+  if (isAnalyzing) {
+    const STEPS = [
+      'Reading data source files…',
+      'Analyzing sheet structure & column stats…',
+      'Understanding department purpose & context…',
+      'Generating custom dashboard with GPT…',
+    ];
+    return (
+      <div style={{ background: C.bg, minHeight: '100%', display: 'flex', flexDirection: 'column', color: C.ink, fontFamily: "'Inter',system-ui,sans-serif" }}>
+        <style>{`.dd-btn{background:transparent;cursor:pointer;transition:background .15s}.dd-btn:hover{background:rgba(255,255,255,.06)}`}</style>
+        {sharedHeader(null, false)}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px' }}>
+          <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(91,141,239,0.1)', border: '1px solid rgba(91,141,239,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 22 }}>
+            <Settings size={28} color={C.blue} style={{ animation: 'spin 2s linear infinite' }} />
+          </div>
+          <h3 style={{ color: C.ink, fontWeight: 800, fontSize: 20, margin: '0 0 10px', textAlign: 'center' }}>Building Your Custom Dashboard</h3>
+          <p style={{ color: C.sub, fontSize: 13, textAlign: 'center', maxWidth: 380, lineHeight: 1.7, margin: '0 0 28px' }}>
+            GPT is reading your data files, understanding your department's purpose, and generating a unique analytics dashboard tailored specifically for <b style={{ color: C.ink }}>{department?.name}</b>.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%', maxWidth: 340 }}>
+            {STEPS.map((step, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: 'rgba(91,141,239,0.06)', borderRadius: 12, border: '1px solid rgba(91,141,239,0.15)' }}>
+                <Loader2 size={14} color={C.blue} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+                <span style={{ fontSize: 13, color: C.sub }}>{step}</span>
+              </div>
+            ))}
+          </div>
+          <p style={{ color: C.faint, fontSize: 11, marginTop: 24, textAlign: 'center' }}>
+            This runs once and is saved permanently. Do not close the tab.
+          </p>
+        </div>
+        <motion.button onClick={() => navigate(`/bot/${deptId}`)} whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}
+          style={{ position: 'fixed', bottom: 24, right: 24, width: 52, height: 52, borderRadius: '50%', background: `linear-gradient(135deg,${C.blue},#6366f1)`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 22px rgba(91,141,239,0.5)', zIndex: 50 }}>
+          <Bot size={22} color="white" />
+        </motion.button>
       </div>
     );
   }
