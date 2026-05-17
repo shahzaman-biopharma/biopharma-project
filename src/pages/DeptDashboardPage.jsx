@@ -86,6 +86,71 @@ function buildBarData(rows, labelCol, numericCols) {
     });
 }
 
+function hexAlpha(hex, alpha) {
+  try {
+    const h = (hex || '#5b8def').replace('#', '');
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  } catch { return `rgba(91,141,239,${alpha})`; }
+}
+
+/* ── Comparison panel ─────────────────────────────────────────────────────── */
+function CompKpiRow({ kpi, compareTo }) {
+  const match = !compareTo || compareTo.formatted === kpi.formatted;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: C.panel2, borderRadius: 9 }}>
+      <span style={{ fontSize: 12, color: C.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '55%' }}>{kpi.label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: C.ink, fontFamily: "'IBM Plex Mono',monospace" }}>{kpi.formatted}</span>
+        {compareTo && (
+          <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: match ? 'rgba(95,184,120,0.12)' : 'rgba(225,95,95,0.12)', color: match ? C.green : C.red, border: `1px solid ${match ? 'rgba(95,184,120,0.3)' : 'rgba(225,95,95,0.3)'}` }}>
+            {match ? '✓' : '≠'}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ComparisonPanel({ source1, source2, validationMode }) {
+  const rows1 = source1?.sheets?.[0]?.rows || [];
+  const rows2 = source2?.sheets?.[0]?.rows || [];
+  const kpis1 = computeKPIs(rows1);
+  const kpis2 = computeKPIs(rows2);
+  const maxLen = Math.max(kpis1.length, kpis2.length);
+  return (
+    <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 16, overflow: 'hidden', marginBottom: 20 }}>
+      <div style={{ padding: '11px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Source Comparison</span>
+        {validationMode && (
+          <span style={{ fontSize: 11, padding: '2px 9px', borderRadius: 20, background: 'rgba(91,141,239,0.1)', color: C.blue, border: '1px solid rgba(91,141,239,0.3)', fontWeight: 600 }}>Validation Mode</span>
+        )}
+        <span style={{ fontSize: 11, color: C.faint, marginLeft: 'auto' }}>KPI match · first sheet per source</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+        <div style={{ padding: '14px 16px', borderRight: `1px solid ${C.line}` }}>
+          <div style={{ fontSize: 11, color: C.sub, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 10 }}>{source1.name}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {Array.from({ length: maxLen }).map((_, i) =>
+              kpis1[i] ? <CompKpiRow key={i} kpi={kpis1[i]} compareTo={kpis2[i]} /> : null
+            )}
+          </div>
+        </div>
+        <div style={{ padding: '14px 16px' }}>
+          <div style={{ fontSize: 11, color: C.sub, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 10 }}>{source2.name}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {Array.from({ length: maxLen }).map((_, i) =>
+              kpis2[i] ? <CompKpiRow key={i} kpi={kpis2[i]} compareTo={kpis1[i]} /> : null
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── UI atoms ─────────────────────────────────────────────────────────────── */
 function DarkTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -152,6 +217,16 @@ export default function DeptDashboardPage() {
     return unsub;
   }, [deptId]);
 
+  // Apply dashboard config whenever department loads or is edited+saved
+  const config = department?.dashboardConfig ?? null;
+  const accentColor = config?.accentColor || C.blue;
+  const validationMode = !!(config?.validationMode);
+  const showComparison = !!(config?.showComparison);
+
+  useEffect(() => {
+    if (config?.defaultChartType) setChartType(config.defaultChartType);
+  }, [config?.defaultChartType]);
+
   const fetchData = useCallback(async (dept) => {
     if (!dept?.dataSources?.length) {
       setAllSheets([]);
@@ -205,6 +280,15 @@ export default function DeptDashboardPage() {
   const useLineChart = barDataLimited.length > 18;
   const multiSource = useMemo(() => new Set(allSheets.map(s => s.sourceName)).size > 1, [allSheets]);
 
+  const sourceGroups = useMemo(() => {
+    const map = new Map();
+    allSheets.forEach(s => {
+      if (!map.has(s.sourceName)) map.set(s.sourceName, []);
+      map.get(s.sourceName).push(s);
+    });
+    return [...map.entries()].map(([name, sheets]) => ({ name, sheets }));
+  }, [allSheets]);
+
   const chart1Cols = numericCols.slice(0, 3);
   const chart2Cols = numericCols.slice(3, 6);
 
@@ -249,13 +333,13 @@ export default function DeptDashboardPage() {
           <ArrowLeft size={15} />
         </button>
 
-        <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(91,141,239,0.12)', border: '1px solid rgba(91,141,239,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <BarChart2 size={17} color={C.blue} />
+        <div style={{ width: 36, height: 36, borderRadius: 9, background: hexAlpha(accentColor, 0.12), border: `1px solid ${hexAlpha(accentColor, 0.3)}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <BarChart2 size={17} color={accentColor} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 15, color: C.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{department?.name}</div>
-          <div style={{ fontSize: 11, color: C.sub, letterSpacing: '.08em', textTransform: 'uppercase' }}>Analytics Dashboard</div>
+          <div style={{ fontSize: 11, color: C.sub, letterSpacing: '.08em', textTransform: 'uppercase' }}>{config?.summaryText || 'Analytics Dashboard'}</div>
         </div>
 
         <button className="dd-btn" onClick={() => fetchData(department)} disabled={dataLoading} title="Refresh data"
@@ -288,6 +372,11 @@ export default function DeptDashboardPage() {
       {/* ── Dashboard content ──────────────────────────────────────────── */}
       {!dataLoading && current && (
         <div style={{ padding: '22px 22px 0' }}>
+
+          {/* Comparison panel for validation/multi-source departments */}
+          {showComparison && sourceGroups.length >= 2 && (
+            <ComparisonPanel source1={sourceGroups[0]} source2={sourceGroups[1]} validationMode={validationMode} />
+          )}
 
           {/* KPI strip */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(175px,1fr))', gap: 13, marginBottom: 20 }}>

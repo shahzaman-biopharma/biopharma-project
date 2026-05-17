@@ -518,6 +518,7 @@ export default function BotPage() {
     let historyLoaded = false;
     const unsub = subscribeToDepartment(deptId, async (dept) => {
       if (!dept) { navigate('/dashboard'); return; }
+      departmentRef.current = dept; // set immediately — don't wait for useEffect after render
       setDepartment(dept);
       if (!historyLoaded) {
         historyLoaded = true;

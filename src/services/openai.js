@@ -257,4 +257,58 @@ Use the provided data context to populate the tables accurately. Create multiple
   return JSON.parse(jsonStr);
 }
 
+export async function generateDashboardConfig({ name, description, businessContext, systemPrompt, dataSources = [] }) {
+  const srcNames = dataSources.map(s => s.name).filter(Boolean).join(', ') || 'N/A';
+  const srcCount = dataSources.length;
+
+  const response = await tryCreate({
+    messages: [{
+      role: 'user',
+      content: `You are a dashboard UI designer for a biopharma CRA analytics platform.
+
+Design a custom dashboard config JSON for the "${name}" department.
+
+Description: ${(description || '').slice(0, 400)}
+Data Sources (${srcCount}): ${srcNames}
+Business Context: ${(businessContext || '').slice(0, 300)}
+System Prompt Focus: ${(systemPrompt || '').slice(0, 200)}
+
+Return ONLY valid JSON, no markdown, no explanation:
+{
+  "layout": "validation|analytics|clinical|finance|standard",
+  "accentColor": "#hexcolor",
+  "defaultChartType": "bar|line|area|pie",
+  "showComparison": true_or_false,
+  "source1Label": "label for first source",
+  "source2Label": "label for second source",
+  "validationMode": true_or_false,
+  "summaryText": "one sentence dashboard description"
+}
+
+Rules:
+- validationMode=true when department does data validation, reconciliation, or audit
+- showComparison=true when 2+ data sources are compared
+- accentColor: red=#e15f5f for validation/errors, blue=#5b8def for analytics, green=#5fb878 for clinical, amber=#e8a838 for finance/projection
+- layout "validation" for reconciliation/audit depts`,
+    }],
+    temperature: 0.2,
+    max_tokens: 350,
+  });
+
+  const raw = response.choices[0].message.content.trim();
+  const jsonStr = raw.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '');
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    return {
+      layout: srcCount >= 2 ? 'comparison' : 'standard',
+      accentColor: '#5b8def',
+      defaultChartType: 'bar',
+      showComparison: srcCount >= 2,
+      validationMode: false,
+      summaryText: `${name} Analytics Dashboard`,
+    };
+  }
+}
+
 export default openai;
