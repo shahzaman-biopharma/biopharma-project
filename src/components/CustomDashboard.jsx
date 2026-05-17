@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   RadialBarChart, RadialBar, PolarAngleAxis, LineChart, Line, Legend,
@@ -9,6 +9,7 @@ import {
   GitMerge, Activity, ChevronRight, CircleDot, TrendingUp, Layers,
   BarChart2, Shield, Zap, Target, Users, Star,
 } from 'lucide-react';
+import { briefChat } from '../services/openai';
 
 /* ── Icon lookup ─────────────────────────────────────────────────────────── */
 const ICON_MAP = {
@@ -279,7 +280,105 @@ function NoteWidget({ w }) {
   );
 }
 
-function Widget({ w }) {
+/* ── AI Hover Tooltip ────────────────────────────────────────────────────── */
+function HoverTip({ w, departmentName, children }) {
+  const [show, setShow] = useState(false);
+  const [text, setText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const cache = useRef({});
+  const timer = useRef(null);
+
+  const handleEnter = async () => {
+    clearTimeout(timer.current);
+    const key = w?.title || w?.type || 'widget';
+    if (cache.current[key]) {
+      setText(cache.current[key]);
+      setLoading(false);
+      setShow(true);
+      return;
+    }
+    setLoading(true);
+    setText('');
+    setShow(true);
+    timer.current = setTimeout(async () => {
+      try {
+        const ctx = [
+          `Department: ${departmentName}.`,
+          `Widget title: "${w?.title || 'Untitled'}".`,
+          `Widget type: ${w?.type || 'unknown'}.`,
+          w?.data ? `Data points: ${JSON.stringify(w.data).slice(0, 500)}.` : '',
+          w?.series ? `Series: ${JSON.stringify(w.series).slice(0, 200)}.` : '',
+          w?.items ? `Items: ${JSON.stringify(w.items).slice(0, 400)}.` : '',
+          w?.columns ? `Columns: ${JSON.stringify(w.columns).slice(0, 200)}.` : '',
+          w?.value !== undefined ? `Value: ${w.value}${w.suffix || ''}.` : '',
+        ].filter(Boolean).join(' ');
+
+        const result = await briefChat({
+          context: ctx,
+          question: 'In 4-5 plain sentences: what does this widget show, why does it matter, which data source it comes from, how was the data analyzed, and what is the key insight for this period?',
+        });
+        cache.current[key] = result;
+        setText(result);
+      } catch {
+        setText('Unable to load explanation. Check API connection.');
+      } finally {
+        setLoading(false);
+      }
+    }, 600);
+  };
+
+  const handleLeave = () => {
+    clearTimeout(timer.current);
+    setShow(false);
+    setLoading(false);
+  };
+
+  return (
+    <div onMouseEnter={handleEnter} onMouseLeave={handleLeave} style={{ position: 'relative' }}>
+      {children}
+      {show && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 50,
+          background: 'rgba(8,10,20,0.94)',
+          backdropFilter: 'blur(10px)',
+          borderRadius: 16, padding: '18px 20px',
+          display: 'flex', flexDirection: 'column', gap: 10,
+          border: '1px solid rgba(122,162,255,.3)',
+          boxShadow: '0 0 0 4px rgba(90,125,255,.08)',
+          animation: 'cdTipIn .18s ease',
+        }}>
+          <style>{`@keyframes cdTipIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}} @keyframes cdBlink{0%,100%{opacity:.25;transform:scale(.7)}50%{opacity:1;transform:scale(1.15)}}`}</style>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 26, height: 26, borderRadius: 7, background: 'rgba(122,162,255,.15)', display: 'grid', placeItems: 'center', border: '1px solid rgba(122,162,255,.3)', flexShrink: 0 }}>
+              <Zap size={13} style={{ color: '#7aa2ff' }} />
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#7aa2ff', letterSpacing: '.1em', textTransform: 'uppercase' }}>AI Insight</span>
+          </div>
+          {w?.title && (
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,.65)', borderBottom: '1px solid rgba(255,255,255,.07)', paddingBottom: 8 }}>
+              {w.title}
+            </div>
+          )}
+          {loading ? (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '6px 0' }}>
+              {[0, 1, 2].map(i => (
+                <div key={i} style={{ width: 7, height: 7, borderRadius: '50%', background: '#7aa2ff', animation: `cdBlink 1.2s ${i * 0.22}s ease-in-out infinite` }} />
+              ))}
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,.35)', marginLeft: 6 }}>Analyzing widget data…</span>
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: 'rgba(255,255,255,.82)', lineHeight: 1.7, flex: 1 }}>{text}</p>
+          )}
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,.2)', textAlign: 'right', marginTop: 2 }}>
+            Move mouse away to close
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Widget({ w, departmentName }) {
   switch (w?.type) {
     case 'bar':    return <BarWidget w={w} />;
     case 'hbar':   return <HBarWidget w={w} />;
@@ -345,7 +444,11 @@ export default function CustomDashboard({ spec, departmentName }) {
       {/* Stats */}
       {(spec.stats || []).length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(175px,1fr))', gap: 13, marginBottom: 22 }}>
-          {spec.stats.map((s, i) => <StatCard key={i} item={s} />)}
+          {spec.stats.map((s, i) => (
+            <HoverTip key={i} w={{ title: s.label, type: 'stat', value: s.value, data: [{ value: s.value, sub: s.sub }] }} departmentName={departmentName}>
+              <StatCard item={s} />
+            </HoverTip>
+          ))}
         </div>
       )}
 
@@ -368,7 +471,11 @@ export default function CustomDashboard({ spec, departmentName }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {(currentTab.rows || []).map((row, ri) => (
             <div key={ri} style={{ display: 'grid', gridTemplateColumns: row.cols === 2 ? '1fr 1fr' : '1fr', gap: 16 }}>
-              {(row.widgets || []).map((w, wi) => <Widget key={wi} w={w} />)}
+              {(row.widgets || []).map((w, wi) => (
+                <HoverTip key={wi} w={w} departmentName={departmentName}>
+                  <Widget w={w} departmentName={departmentName} />
+                </HoverTip>
+              ))}
             </div>
           ))}
         </div>

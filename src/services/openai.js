@@ -11,6 +11,14 @@ const DATA_ACCURACY_RULES = `
 ║  DATA ACCURACY — ABSOLUTE RULES — OVERRIDE EVERYTHING ELSE          ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
+⚠️ SCOPE: These rules apply ONLY when the user asks about specific data values,
+records, names, numbers, dates, or anything that should be in the spreadsheet.
+
+For conversational messages — greetings (hello, hi, salam, salaam, assalamualaikum,
+hey, good morning, how are you), thank you messages, help questions, or ANY message
+NOT asking about spreadsheet data — respond naturally and warmly as a helpful
+assistant. NEVER apply data lookup rules to casual conversation.
+
 1. DATA CONTEXT IS THE ONLY SOURCE OF TRUTH
    - Every value you display (name, number, date, ID, status, anything)
      MUST exist VERBATIM in the DATA CONTEXT section below.
@@ -36,8 +44,8 @@ const DATA_ACCURACY_RULES = `
    - "Total rows: N" tells you the EXACT count — do not show more or fewer.
 
 5. IF NOT FOUND → SAY SO
-   - If something is not in the DATA CONTEXT, respond:
-     "This entry/value is not present in the current connected data."
+   - If the user is asking about specific data and it is not in the DATA CONTEXT,
+     respond: "This entry/value is not present in the current connected data."
    - Do not make up a plausible-sounding answer.
 `;
 
@@ -73,9 +81,9 @@ VOICE MODE — STRICT RULES (override all formatting rules):
 `;
 
 // Primary model — override anytime via VITE_OPENAI_MODEL in .env / Vercel env vars
-const PRIMARY = import.meta.env.VITE_OPENAI_MODEL || 'gpt-5.5-mini';
+const PRIMARY = import.meta.env.VITE_OPENAI_MODEL || 'gpt-5.5';
 // Fallback chain: if primary is not available (404) try next in list
-const MODELS = [PRIMARY, 'gpt-4o-mini', 'gpt-3.5-turbo']
+const MODELS = [PRIMARY, 'gpt-5.4', 'gpt-5.4-mini', 'gpt-4o', 'gpt-4o-mini']
   .filter((m, i, arr) => arr.indexOf(m) === i); // deduplicate
 
 function getStatus(err) {
@@ -95,14 +103,15 @@ async function tryCreate(params) {
     } catch (err) {
       lastErr = err;
       const status = getStatus(err);
-      // 404 = model not found → try next model
-      if (status === 404 && model !== MODELS[MODELS.length - 1]) continue;
       // 429 / quota exceeded → surface friendly message immediately
       if (isRateLimit(err)) {
         const e = new Error('Rate limit reached. Please wait a moment and try again.');
         e.status = 429;
         throw e;
       }
+      // 404 = model not found → try next model in chain
+      if (status === 404) continue;
+      // Any other error → throw immediately
       throw err;
     }
   }
@@ -400,6 +409,21 @@ Return ONLY valid JSON — no markdown, no explanation, no \`\`\`.`;
       tabs: [{ id: 'overview', label: 'Overview', rows: [{ cols: 1, widgets: [{ type: 'note', title: 'Dashboard Ready', items: ['Connect data sources and re-analyze to see full analytics.'] }] }] }],
     };
   }
+}
+
+export async function briefChat({ context, question }) {
+  const response = await tryCreate({
+    messages: [
+      {
+        role: 'system',
+        content: 'You are a biopharma data analyst explaining dashboard widgets. Give a clear, plain English explanation in 4-5 sentences. No markdown, no bullet points, no headers. Be specific about what the numbers mean, which data source they come from, and why they matter for clinical research.',
+      },
+      { role: 'user', content: `${context}\n\nExplain: ${question}` },
+    ],
+    temperature: 0.4,
+    max_tokens: 160,
+  });
+  return response.choices[0].message.content.trim();
 }
 
 export default openai;

@@ -941,7 +941,7 @@ export default function BotPage() {
         <VoiceMode
           department={department}
           messages={messages}
-          getDataContext={() => fetchDeptContext(departmentRef.current)}
+          getDataContext={() => contextCacheRef.current || ''}
           onClose={() => setVoiceMode(false)}
           onVoiceMessage={handleVoiceMessage}
         />
