@@ -80,6 +80,75 @@ VOICE MODE — STRICT RULES (override all formatting rules):
 - TONE: Natural, warm, spoken-word style as if talking face to face
 `;
 
+// ─── Chunked reading — splits large dataContext into safe-size pieces ─────────
+// ~50k chars ≈ 12,500 tokens; safe for all models in the fallback chain
+const CHUNK_CHARS = 50_000;
+
+function splitContextIntoChunks(text, maxChars = CHUNK_CHARS) {
+  if (text.length <= maxChars) return [text];
+
+  // Try to split at sheet boundaries so each chunk is a complete sheet
+  const sections = text.split(/(?=^=== Sheet:/m));
+  const chunks = [];
+  let current = '';
+
+  for (const section of sections) {
+    if (current && (current + section).length > maxChars) {
+      chunks.push(current.trim());
+      current = section;
+    } else {
+      current += section;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+
+  // Force-split any chunk that is still too large (e.g. single massive sheet)
+  const result = [];
+  for (const chunk of chunks) {
+    if (chunk.length <= maxChars) {
+      result.push(chunk);
+    } else {
+      for (let i = 0; i < chunk.length; i += maxChars) {
+        result.push(chunk.slice(i, i + maxChars));
+      }
+    }
+  }
+  return result;
+}
+
+// Phase 1: extract relevant fragments from each chunk; Phase 2: synthesise final answer
+async function chatWithBotChunked({ systemPrompt, userMessage, dataContext, voiceMode }) {
+  const chunks = splitContextIntoChunks(dataContext);
+  const extracts = [];
+
+  // Phase 1 — extract relevant data from every chunk independently
+  for (let i = 0; i < chunks.length; i++) {
+    const res = await tryCreate({
+      messages: [
+        {
+          role: 'system',
+          content: `You are a data extraction assistant. Extract ALL information from this data chunk that is relevant to the user's question. Be thorough and exact — copy relevant rows, numbers, and values verbatim. Do not answer the question yet; just extract the relevant data. This is chunk ${i + 1} of ${chunks.length}.`,
+        },
+        {
+          role: 'user',
+          content: `USER QUESTION: ${userMessage}\n\nDATA CHUNK ${i + 1}/${chunks.length}:\n${chunks[i]}\n\nExtract all data relevant to the question above.`,
+        },
+      ],
+      temperature: 0.1,
+      max_completion_tokens: 2000,
+    });
+    const extract = res.choices[0].message.content.trim();
+    if (extract) extracts.push(`[Data Section ${i + 1}/${chunks.length}]\n${extract}`);
+  }
+
+  // Phase 2 — combine all extracts and produce the final answer
+  const combined = extracts.length
+    ? `EXTRACTED DATA FROM ${chunks.length} SECTIONS:\n\n${extracts.join('\n\n---\n\n')}`
+    : dataContext.slice(0, CHUNK_CHARS); // fallback: first chunk if nothing extracted
+
+  return chatWithBot({ systemPrompt, userMessage, dataContext: combined, voiceMode });
+}
+
 // Primary model — override anytime via VITE_OPENAI_MODEL in .env / Vercel env vars
 const PRIMARY = import.meta.env.VITE_OPENAI_MODEL || 'gpt-5.5';
 // Fallback chain: if primary is not available (404) try next in list
@@ -119,6 +188,11 @@ async function tryCreate(params) {
 }
 
 export async function chatWithBot({ systemPrompt, userMessage, dataContext = '', voiceMode = false }) {
+  // Auto-route to chunked reading when data exceeds safe token limit
+  if (dataContext.length > CHUNK_CHARS) {
+    return chatWithBotChunked({ systemPrompt, userMessage, dataContext, voiceMode });
+  }
+
   const systemContent = [
     dataContext ? DATA_ACCURACY_RULES : '',
     systemPrompt,
@@ -134,7 +208,7 @@ export async function chatWithBot({ systemPrompt, userMessage, dataContext = '',
       { role: 'user', content: userMessage },
     ],
     temperature: 0.2,
-    max_tokens: 2500,
+    max_completion_tokens: 2500,
   });
 
   return response.choices[0].message.content;
@@ -174,7 +248,7 @@ RULES: Use **bold** for numbers and critical items. Use tables wherever data can
   const response = await tryCreate({
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.5,
-    max_tokens: 3000,
+    max_completion_tokens: 3000,
   });
 
   return response.choices[0].message.content;
@@ -222,7 +296,7 @@ Write only the system prompt text, nothing else. Make it long, comprehensive, an
       },
     ],
     temperature: 0.5,
-    max_tokens: 1500,
+    max_completion_tokens: 1500,
   });
 
   return response.choices[0].message.content;
@@ -258,7 +332,7 @@ Use the provided data context to populate the tables accurately. Create multiple
       },
     ],
     temperature: 0.2,
-    max_tokens: 4000,
+    max_completion_tokens: 4000,
   });
 
   const raw = response.choices[0].message.content.trim();
@@ -301,7 +375,7 @@ Rules:
 - layout "validation" for reconciliation/audit depts`,
     }],
     temperature: 0.2,
-    max_tokens: 350,
+    max_completion_tokens: 350,
   });
 
   const raw = response.choices[0].message.content.trim();
@@ -337,6 +411,28 @@ export async function generateDashboardSpec({ name, tag, description, businessCo
     }).join('\n\n');
   };
 
+  // If sheetSummaries is very large, pre-compress it by extracting only stats per chunk
+  let formattedSummaries = formatSummaries(sheetSummaries);
+  if (formattedSummaries.length > CHUNK_CHARS) {
+    const summaryChunks = splitContextIntoChunks(formattedSummaries);
+    const compressedParts = [];
+    for (let i = 0; i < summaryChunks.length; i++) {
+      const res = await tryCreate({
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a data summarizer. From this data summary chunk, extract the most important statistics: total row counts, key column names, top numeric values (min/max/avg/sum), and top categorical values. Be concise — output only the essential numbers needed to build charts.',
+          },
+          { role: 'user', content: summaryChunks[i] },
+        ],
+        temperature: 0.1,
+        max_completion_tokens: 1500,
+      });
+      compressedParts.push(res.choices[0].message.content.trim());
+    }
+    formattedSummaries = compressedParts.join('\n\n---\n\n');
+  }
+
   const prompt = `You are a data analyst dashboard designer for a biopharma CRA analytics platform.
 
 REFERENCE EXAMPLE (DVL Validation Department — match this quality and format for your output):
@@ -353,7 +449,7 @@ System Prompt Focus: ${systemPrompt}
 Data Sources: ${(dataSourceNames || []).join(', ') || 'None connected'}
 
 DATA SUMMARIES (real computed stats from each sheet — use these exact numbers in charts/stats):
-${formatSummaries(sheetSummaries)}
+${formattedSummaries}
 
 SPEC SCHEMA (follow exactly):
 {
@@ -388,7 +484,7 @@ Return ONLY valid JSON — no markdown, no explanation, no \`\`\`.`;
   const response = await tryCreate({
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.3,
-    max_tokens: 4000,
+    max_completion_tokens: 4000,
   });
 
   const raw = response.choices[0].message.content.trim()
@@ -421,7 +517,7 @@ export async function briefChat({ context, question }) {
       { role: 'user', content: `${context}\n\nExplain: ${question}` },
     ],
     temperature: 0.4,
-    max_tokens: 160,
+    max_completion_tokens: 160,
   });
   return response.choices[0].message.content.trim();
 }
