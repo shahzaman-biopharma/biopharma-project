@@ -80,14 +80,70 @@ VOICE MODE — STRICT RULES (override all formatting rules):
 - TONE: Natural, warm, spoken-word style as if talking face to face
 `;
 
+// ─── Model chain ─────────────────────────────────────────────────────────────
+// Override primary via VITE_OPENAI_MODEL in .env / Vercel env vars
+const PRIMARY = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o';
+const MODELS = [PRIMARY, 'gpt-4o-mini']
+  .filter((m, i, arr) => arr.indexOf(m) === i); // deduplicate
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function getStatus(err) {
+  return err?.status ?? err?.response?.status ?? 0;
+}
+function isRateLimit(err) {
+  const s = getStatus(err);
+  const m = String(err?.message ?? err?.error?.message ?? '').toLowerCase();
+  return s === 429 || m.includes('rate limit') || m.includes('quota') || m.includes('exceeded');
+}
+
+// ─── tryCreate: model fallback + 429 exponential backoff ─────────────────────
+// 429 → wait and retry same model (5 s → 15 s → 40 s), then try next model
+// 404 / 400 → model unavailable, try next model immediately
+// other errors → throw immediately
+const BACKOFF_MS = [5_000, 15_000, 40_000];
+
+async function tryCreate(params) {
+  let lastErr;
+  for (const model of MODELS) {
+    for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
+      try {
+        return await openai.chat.completions.create({ ...params, model });
+      } catch (err) {
+        lastErr = err;
+        const status = getStatus(err);
+
+        if (isRateLimit(err)) {
+          if (attempt < BACKOFF_MS.length) {
+            console.warn(`[openai] 429 on ${model}, retrying in ${BACKOFF_MS[attempt] / 1000}s…`);
+            await sleep(BACKOFF_MS[attempt]);
+            continue; // retry same model after wait
+          }
+          break; // all retries exhausted for this model → try next
+        }
+
+        if (status === 404 || status === 400) break; // model not available → next model
+
+        throw err; // unknown error → surface immediately
+      }
+    }
+  }
+  throw new Error('Service is temporarily busy. Please wait a moment and try again.');
+}
+
 // ─── Chunked reading — splits large dataContext into safe-size pieces ─────────
-// ~50k chars ≈ 12,500 tokens; safe for all models in the fallback chain
-const CHUNK_CHARS = 50_000;
+// gpt-4o supports 128k tokens (~512k chars). We use 100k chars per chunk to
+// leave headroom for system prompt + response tokens.
+const CHUNK_CHARS = 100_000;
+
+// Max extraction chunks to keep total API calls bounded (prevents rate-limit cascade)
+const MAX_CHUNKS = 6;
 
 function splitContextIntoChunks(text, maxChars = CHUNK_CHARS) {
   if (text.length <= maxChars) return [text];
 
-  // Try to split at sheet boundaries so each chunk is a complete sheet
+  // Prefer splitting at sheet boundaries so each chunk is a whole sheet
   const sections = text.split(/(?=^=== Sheet:/m));
   const chunks = [];
   let current = '';
@@ -113,78 +169,52 @@ function splitContextIntoChunks(text, maxChars = CHUNK_CHARS) {
       }
     }
   }
+
+  // If still too many chunks, merge pairs until within MAX_CHUNKS
+  while (result.length > MAX_CHUNKS) {
+    const merged = [];
+    for (let i = 0; i < result.length; i += 2) {
+      merged.push(i + 1 < result.length ? result[i] + '\n\n' + result[i + 1] : result[i]);
+    }
+    result.length = 0;
+    result.push(...merged);
+  }
+
   return result;
 }
 
-// Phase 1: extract relevant fragments from each chunk; Phase 2: synthesise final answer
+// Phase 1: extract relevant fragments from each chunk sequentially (with delay)
+// Phase 2: synthesise final answer from combined extracts
 async function chatWithBotChunked({ systemPrompt, userMessage, dataContext, voiceMode }) {
   const chunks = splitContextIntoChunks(dataContext);
   const extracts = [];
 
-  // Phase 1 — extract relevant data from every chunk independently
   for (let i = 0; i < chunks.length; i++) {
+    if (i > 0) await sleep(2000); // 2 s gap between chunk calls to avoid rate limits
     const res = await tryCreate({
       messages: [
         {
           role: 'system',
-          content: `You are a data extraction assistant. Extract ALL information from this data chunk that is relevant to the user's question. Be thorough and exact — copy relevant rows, numbers, and values verbatim. Do not answer the question yet; just extract the relevant data. This is chunk ${i + 1} of ${chunks.length}.`,
+          content: `You are a data extraction assistant. From this data chunk, extract ALL rows, numbers, and values that are relevant to the user's question. Copy them verbatim. Do not answer the question yet — only extract. Chunk ${i + 1} of ${chunks.length}.`,
         },
         {
           role: 'user',
-          content: `USER QUESTION: ${userMessage}\n\nDATA CHUNK ${i + 1}/${chunks.length}:\n${chunks[i]}\n\nExtract all data relevant to the question above.`,
+          content: `USER QUESTION: ${userMessage}\n\nDATA CHUNK ${i + 1}/${chunks.length}:\n${chunks[i]}\n\nExtract all relevant data.`,
         },
       ],
       temperature: 0.1,
       max_completion_tokens: 2000,
     });
     const extract = res.choices[0].message.content.trim();
-    if (extract) extracts.push(`[Data Section ${i + 1}/${chunks.length}]\n${extract}`);
+    if (extract) extracts.push(`[Section ${i + 1}/${chunks.length}]\n${extract}`);
   }
 
-  // Phase 2 — combine all extracts and produce the final answer
+  // Phase 2 — synthesise from combined extracts
   const combined = extracts.length
     ? `EXTRACTED DATA FROM ${chunks.length} SECTIONS:\n\n${extracts.join('\n\n---\n\n')}`
-    : dataContext.slice(0, CHUNK_CHARS); // fallback: first chunk if nothing extracted
+    : dataContext.slice(0, CHUNK_CHARS);
 
   return chatWithBot({ systemPrompt, userMessage, dataContext: combined, voiceMode });
-}
-
-// Primary model — override anytime via VITE_OPENAI_MODEL in .env / Vercel env vars
-const PRIMARY = import.meta.env.VITE_OPENAI_MODEL || 'gpt-5.5';
-// Fallback chain: if primary is not available (404) try next in list
-const MODELS = [PRIMARY, 'gpt-5.4', 'gpt-5.4-mini', 'gpt-4o', 'gpt-4o-mini']
-  .filter((m, i, arr) => arr.indexOf(m) === i); // deduplicate
-
-function getStatus(err) {
-  return err?.status ?? err?.response?.status ?? 0;
-}
-function isRateLimit(err) {
-  const s = getStatus(err);
-  const m = String(err?.message ?? err?.error?.message ?? '').toLowerCase();
-  return s === 429 || m.includes('rate limit') || m.includes('quota') || m.includes('exceeded');
-}
-
-async function tryCreate(params) {
-  let lastErr;
-  for (const model of MODELS) {
-    try {
-      return await openai.chat.completions.create({ ...params, model });
-    } catch (err) {
-      lastErr = err;
-      const status = getStatus(err);
-      // 429 / quota exceeded → surface friendly message immediately
-      if (isRateLimit(err)) {
-        const e = new Error('Rate limit reached. Please wait a moment and try again.');
-        e.status = 429;
-        throw e;
-      }
-      // 404 / 400 = model not found or not available → try next model in chain
-      if (status === 404 || status === 400) continue;
-      // Any other error → throw immediately
-      throw err;
-    }
-  }
-  throw lastErr;
 }
 
 export async function chatWithBot({ systemPrompt, userMessage, dataContext = '', voiceMode = false }) {
@@ -411,26 +441,14 @@ export async function generateDashboardSpec({ name, tag, description, businessCo
     }).join('\n\n');
   };
 
-  // If sheetSummaries is very large, pre-compress it by extracting only stats per chunk
+  // Summaries are already stats (not raw data) — simply truncate if oversized.
+  // Max 30k chars leaves plenty of room in the prompt for the spec schema + rules.
+  const MAX_SUMMARY_CHARS = 30_000;
   let formattedSummaries = formatSummaries(sheetSummaries);
-  if (formattedSummaries.length > CHUNK_CHARS) {
-    const summaryChunks = splitContextIntoChunks(formattedSummaries);
-    const compressedParts = [];
-    for (let i = 0; i < summaryChunks.length; i++) {
-      const res = await tryCreate({
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a data summarizer. From this data summary chunk, extract the most important statistics: total row counts, key column names, top numeric values (min/max/avg/sum), and top categorical values. Be concise — output only the essential numbers needed to build charts.',
-          },
-          { role: 'user', content: summaryChunks[i] },
-        ],
-        temperature: 0.1,
-        max_completion_tokens: 1500,
-      });
-      compressedParts.push(res.choices[0].message.content.trim());
-    }
-    formattedSummaries = compressedParts.join('\n\n---\n\n');
+  if (formattedSummaries.length > MAX_SUMMARY_CHARS) {
+    const cut = formattedSummaries.lastIndexOf('\n\n', MAX_SUMMARY_CHARS);
+    formattedSummaries = formattedSummaries.slice(0, cut > 0 ? cut : MAX_SUMMARY_CHARS)
+      + '\n\n[Further sheets omitted — use the numbers above for chart values]';
   }
 
   const prompt = `You are a data analyst dashboard designer for a biopharma CRA analytics platform.

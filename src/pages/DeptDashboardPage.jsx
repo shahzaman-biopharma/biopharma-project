@@ -541,7 +541,7 @@ export default function DeptDashboardPage() {
   useEffect(() => {
     if (!department || analysisStartedRef.current) return;
     const status = department.dashboardStatus;
-    if (status === 'pending' || status === 'analyzing' || status === 'error') {
+    if (status === 'pending' || status === 'analyzing') {
       analysisStartedRef.current = true;
       analyzeAndBuildDashboard(department, deptId).catch(() => { analysisStartedRef.current = false; });
     }
