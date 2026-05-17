@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { subscribeToDepartment } from '../services/firestore';
 import { fetchGoogleSheetRaw } from '../services/excel';
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import {
@@ -142,6 +142,7 @@ export default function DeptDashboardPage() {
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState(null);
   const [activeTab, setActiveTab] = useState('charts');
+  const [chartType, setChartType] = useState('bar'); // 'bar' | 'line' | 'area' | 'pie'
 
   useEffect(() => {
     const unsub = subscribeToDepartment(deptId, (dept) => {
@@ -311,7 +312,7 @@ export default function DeptDashboardPage() {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 5, marginLeft: allSheets.length > 1 ? 'auto' : 0 }}>
+            <div style={{ display: 'flex', gap: 5, marginLeft: allSheets.length > 1 ? 'auto' : 0, flexWrap: 'wrap' }}>
               {[['charts', 'Charts'], ['table', 'Data Table']].map(([k, l]) => (
                 <button key={k} onClick={() => setActiveTab(k)} style={{
                   padding: '7px 16px', borderRadius: 8, border: `1px solid ${activeTab === k ? C.teal : C.line}`,
@@ -319,6 +320,20 @@ export default function DeptDashboardPage() {
                   fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all .15s',
                 }}>{l}</button>
               ))}
+
+              {activeTab === 'charts' && numericCols.length > 0 && (
+                <div style={{ display: 'flex', gap: 4, marginLeft: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: C.faint, marginRight: 2 }}>Type:</span>
+                  {[['bar', 'Bar'], ['line', 'Line'], ['area', 'Area'], ['pie', 'Pie']].map(([k, l]) => (
+                    <button key={k} onClick={() => setChartType(k)} style={{
+                      padding: '3px 9px', borderRadius: 6, border: `1px solid ${chartType === k ? C.amber : C.line}`,
+                      background: chartType === k ? 'rgba(232,168,56,0.12)' : 'transparent',
+                      color: chartType === k ? C.amber : C.faint,
+                      fontSize: 11, fontWeight: chartType === k ? 700 : 400, cursor: 'pointer', transition: 'all .15s',
+                    }}>{l}</button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <span style={{ color: C.faint, fontSize: 11, whiteSpace: 'nowrap', fontFamily: "'IBM Plex Mono',monospace" }}>
@@ -351,33 +366,67 @@ export default function DeptDashboardPage() {
                       {/* Main chart */}
                       <ChartCard
                         title={chart1Cols.map(i => String(headers[i] || '')).join(' · ')}
-                        desc={`${useLineChart ? 'Trend' : 'Comparison'} across ${barDataLimited.length} records`}
+                        desc={`${barDataLimited.length} records · ${chartType} view`}
                       >
-                        <ResponsiveContainer width="100%" height={300}>
-                          {useLineChart ? (
-                            <LineChart data={barDataLimited} margin={{ top: 5, right: 10, bottom: 62, left: -10 }}>
-                              <CartesianGrid stroke={C.line} vertical={false} />
-                              <XAxis dataKey="_label" angle={-38} textAnchor="end" interval={0} tick={{ fill: C.sub, fontSize: 10 }} height={70} tickFormatter={v => String(v).length > 13 ? String(v).slice(0, 12) + '…' : v} />
-                              <YAxis tick={{ fill: C.sub, fontSize: 10 }} tickFormatter={fmtNum} />
-                              <Tooltip content={<DarkTooltip />} />
-                              {chart1Cols.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
-                              {chart1Cols.map((ci, idx) => (
-                                <Line key={ci} type="monotone" dataKey={String(headers[ci] || `Col${ci + 1}`)} stroke={COLORS[idx]} strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
-                              ))}
-                            </LineChart>
-                          ) : (
-                            <BarChart data={barDataLimited} margin={{ top: 5, right: 10, bottom: 62, left: -10 }}>
-                              <CartesianGrid stroke={C.line} vertical={false} />
-                              <XAxis dataKey="_label" angle={-38} textAnchor="end" interval={0} tick={{ fill: C.sub, fontSize: 10 }} height={70} tickFormatter={v => String(v).length > 13 ? String(v).slice(0, 12) + '…' : v} />
-                              <YAxis tick={{ fill: C.sub, fontSize: 10 }} tickFormatter={fmtNum} />
-                              <Tooltip content={<DarkTooltip />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
-                              {chart1Cols.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
-                              {chart1Cols.map((ci, idx) => (
-                                <Bar key={ci} dataKey={String(headers[ci] || `Col${ci + 1}`)} fill={COLORS[idx]} radius={[3, 3, 0, 0]} maxBarSize={38} />
-                              ))}
-                            </BarChart>
-                          )}
-                        </ResponsiveContainer>
+                        {chartType === 'pie' ? (
+                          <>
+                            <ResponsiveContainer width="100%" height={220}>
+                              <PieChart>
+                                <Pie data={barDataLimited.slice(0, 15).map(r => ({ name: r._label, value: r[String(headers[chart1Cols[0]] || `Col${chart1Cols[0]+1}`)] || 0 }))}
+                                  dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85}
+                                  label={({ name }) => String(name).length > 10 ? String(name).slice(0, 9) + '…' : name} labelLine={false}>
+                                  {barDataLimited.slice(0, 15).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                                </Pie>
+                                <Tooltip contentStyle={{ background: '#0a0f1a', border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 12 }} />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </>
+                        ) : (
+                          <ResponsiveContainer width="100%" height={300}>
+                            {chartType === 'line' ? (
+                              <LineChart data={barDataLimited} margin={{ top: 5, right: 10, bottom: 62, left: -10 }}>
+                                <CartesianGrid stroke={C.line} vertical={false} />
+                                <XAxis dataKey="_label" angle={-38} textAnchor="end" interval={0} tick={{ fill: C.sub, fontSize: 10 }} height={70} tickFormatter={v => String(v).length > 13 ? String(v).slice(0, 12) + '…' : v} />
+                                <YAxis tick={{ fill: C.sub, fontSize: 10 }} tickFormatter={fmtNum} />
+                                <Tooltip content={<DarkTooltip />} />
+                                {chart1Cols.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
+                                {chart1Cols.map((ci, idx) => (
+                                  <Line key={ci} type="monotone" dataKey={String(headers[ci] || `Col${ci + 1}`)} stroke={COLORS[idx]} strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                                ))}
+                              </LineChart>
+                            ) : chartType === 'area' ? (
+                              <AreaChart data={barDataLimited} margin={{ top: 5, right: 10, bottom: 62, left: -10 }}>
+                                <defs>
+                                  {chart1Cols.map((ci, idx) => (
+                                    <linearGradient key={ci} id={`agrad${idx}`} x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="5%" stopColor={COLORS[idx]} stopOpacity={0.3} />
+                                      <stop offset="95%" stopColor={COLORS[idx]} stopOpacity={0} />
+                                    </linearGradient>
+                                  ))}
+                                </defs>
+                                <CartesianGrid stroke={C.line} vertical={false} />
+                                <XAxis dataKey="_label" angle={-38} textAnchor="end" interval={0} tick={{ fill: C.sub, fontSize: 10 }} height={70} tickFormatter={v => String(v).length > 13 ? String(v).slice(0, 12) + '…' : v} />
+                                <YAxis tick={{ fill: C.sub, fontSize: 10 }} tickFormatter={fmtNum} />
+                                <Tooltip content={<DarkTooltip />} />
+                                {chart1Cols.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
+                                {chart1Cols.map((ci, idx) => (
+                                  <Area key={ci} type="monotone" dataKey={String(headers[ci] || `Col${ci + 1}`)} stroke={COLORS[idx]} strokeWidth={2} fill={`url(#agrad${idx})`} />
+                                ))}
+                              </AreaChart>
+                            ) : (
+                              <BarChart data={barDataLimited} margin={{ top: 5, right: 10, bottom: 62, left: -10 }}>
+                                <CartesianGrid stroke={C.line} vertical={false} />
+                                <XAxis dataKey="_label" angle={-38} textAnchor="end" interval={0} tick={{ fill: C.sub, fontSize: 10 }} height={70} tickFormatter={v => String(v).length > 13 ? String(v).slice(0, 12) + '…' : v} />
+                                <YAxis tick={{ fill: C.sub, fontSize: 10 }} tickFormatter={fmtNum} />
+                                <Tooltip content={<DarkTooltip />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
+                                {chart1Cols.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
+                                {chart1Cols.map((ci, idx) => (
+                                  <Bar key={ci} dataKey={String(headers[ci] || `Col${ci + 1}`)} fill={COLORS[idx]} radius={[3, 3, 0, 0]} maxBarSize={38} />
+                                ))}
+                              </BarChart>
+                            )}
+                          </ResponsiveContainer>
+                        )}
                       </ChartCard>
 
                       {/* Right panel: chart2 OR pie OR distribution bars */}

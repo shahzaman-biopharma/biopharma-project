@@ -72,6 +72,39 @@ VOICE MODE — STRICT RULES (override all formatting rules):
 - TONE: Natural, warm, spoken-word style as if talking face to face
 `;
 
+const MODELS = ['gpt-4o-mini', 'gpt-3.5-turbo'];
+
+function getStatus(err) {
+  return err?.status ?? err?.response?.status ?? 0;
+}
+function isRateLimit(err) {
+  const s = getStatus(err);
+  const m = String(err?.message ?? err?.error?.message ?? '').toLowerCase();
+  return s === 429 || m.includes('rate limit') || m.includes('quota') || m.includes('exceeded');
+}
+
+async function tryCreate(params) {
+  let lastErr;
+  for (const model of MODELS) {
+    try {
+      return await openai.chat.completions.create({ ...params, model });
+    } catch (err) {
+      lastErr = err;
+      const status = getStatus(err);
+      // 404 = model not found → try next model
+      if (status === 404 && model !== MODELS[MODELS.length - 1]) continue;
+      // 429 / quota exceeded → surface friendly message immediately
+      if (isRateLimit(err)) {
+        const e = new Error('Rate limit reached. Please wait a moment and try again.');
+        e.status = 429;
+        throw e;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 export async function chatWithBot({ systemPrompt, userMessage, dataContext = '', voiceMode = false }) {
   const systemContent = [
     dataContext ? DATA_ACCURACY_RULES : '',
@@ -82,8 +115,7 @@ export async function chatWithBot({ systemPrompt, userMessage, dataContext = '',
       : '',
   ].filter(Boolean).join('\n\n');
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+  const response = await tryCreate({
     messages: [
       { role: 'system', content: systemContent },
       { role: 'user', content: userMessage },
@@ -126,8 +158,7 @@ Structure the report with these exact sections using markdown:
 ---
 RULES: Use **bold** for numbers and critical items. Use tables wherever data can be compared. Keep language professional and precise.`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+  const response = await tryCreate({
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.5,
     max_tokens: 3000,
@@ -137,8 +168,7 @@ RULES: Use **bold** for numbers and critical items. Use tables wherever data can
 }
 
 export async function generateDepartmentPrompt({ name, description, businessContext }) {
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+  const response = await tryCreate({
     messages: [
       {
         role: 'user',
@@ -186,8 +216,7 @@ Write only the system prompt text, nothing else. Make it long, comprehensive, an
 }
 
 export async function generateFileData({ userRequest, dataContext, departmentName }) {
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+  const response = await tryCreate({
     messages: [
       {
         role: 'system',
