@@ -21,7 +21,7 @@ export async function parseExcelFile(file) {
   });
 }
 
-const MAX_ROWS_PER_SHEET = 500;
+const MAX_ROWS_PER_SHEET = 200; // keep context small → fewer tokens → fewer 429s
 
 export function sheetsToText(sheets) {
   let text = '';

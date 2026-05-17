@@ -3,7 +3,7 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { subscribeToDepartment, getChatHistory, saveChatMessage } from '../services/firestore';
 import { chatWithBot, generateFileData } from '../services/openai';
-import { fetchGoogleSheetData, fetchGoogleSheetRaw } from '../services/excel';
+import { fetchGoogleSheetRaw, sheetsToText } from '../services/excel';
 import {
   ArrowLeft, Send, Bot, User, Loader2,
   Database, RefreshCw, Sparkles,
@@ -449,24 +449,18 @@ function ChatMessage({ msg }) {
   );
 }
 
-// ─── Live data fetcher (full context — all sources) ───────────────────────────
+// ─── Build context text from raw sheet data (no extra API call) ──────────────
 
-async function fetchDeptContext(dept) {
+function buildContextFromSheets(dept, rawResults) {
   let ctx = `Department: ${dept.name}\nDescription: ${dept.description}\n\n`;
-  if (!dept?.dataSources?.length) return ctx;
   const sheetIndex = [];
-  for (const src of dept.dataSources) {
-    try {
-      if ((src.type === 'googlesheet' || src.type === 'onedrive') && src.url) {
-        const result = await fetchGoogleSheetData(src.url);
-        ctx += `\n--- Data Source: "${src.name}" ---\n${result.text}\n`;
-        if (result.sheetNames?.length)
-          sheetIndex.push(`"${src.name}": ${result.sheetNames.length} tab(s) — [${result.sheetNames.join(', ')}]`);
-      } else if (src.type === 'text' && src.content) {
-        ctx += `\n--- Data Source: "${src.name}" ---\n${src.content}\n`;
-      }
-    } catch (err) {
-      ctx += `\n--- Data Source: "${src.name}" ---\nError loading: ${err.message}\n`;
+  for (const { src, sheets, sheetNames, textContent } of rawResults) {
+    if (textContent) {
+      ctx += `\n--- Data Source: "${src.name}" ---\n${textContent}\n`;
+    } else {
+      ctx += `\n--- Data Source: "${src.name}" ---\n${sheetsToText(sheets)}\n`;
+      if (sheetNames?.length)
+        sheetIndex.push(`"${src.name}": ${sheetNames.length} tab(s) — [${sheetNames.join(', ')}]`);
     }
   }
   if (sheetIndex.length) ctx += `\n\n--- SHEET INDEX ---\n${sheetIndex.join('\n')}\n`;
@@ -501,6 +495,9 @@ export default function BotPage() {
   const departmentRef = useRef(null);
   const selectedSheetRef = useRef(null);
   const allSheetsRef = useRef([]);
+  // Context cache — rebuilt once on load, reused on every message (no re-fetch)
+  const contextCacheRef = useRef(null);   // string
+  const contextCacheTimeRef = useRef(0);  // ms timestamp
 
   useEffect(() => { departmentRef.current = department; }, [department]);
   useEffect(() => { selectedSheetRef.current = selectedSheet; }, [selectedSheet]);
@@ -556,9 +553,16 @@ export default function BotPage() {
     }
   }, [department, pageLoading]);
 
-  const loadDataSources = async (dept) => {
-    if (!dept.dataSources?.length) { setDataLoaded(true); return; }
+  const loadDataSources = async (dept, forceRefresh = false) => {
+    if (!dept.dataSources?.length) {
+      contextCacheRef.current = `Department: ${dept.name}\nDescription: ${dept.description}`;
+      contextCacheTimeRef.current = Date.now();
+      setDataLoaded(true);
+      return;
+    }
     const sheets = [];
+    const rawResults = [];  // for context building
+    setSyncing(true);
     for (const src of dept.dataSources) {
       try {
         if ((src.type === 'googlesheet' || src.type === 'onedrive') && src.url) {
@@ -567,10 +571,18 @@ export default function BotPage() {
             if ((raw[name] || []).length > 1)
               sheets.push({ sourceName: src.name || 'Data', sheetName: name, rows: raw[name] });
           });
+          rawResults.push({ src, sheets: raw, sheetNames });
+        } else if (src.type === 'text' && src.content) {
+          rawResults.push({ src, sheets: {}, sheetNames: [], textContent: src.content });
         }
       } catch { /* individual source failures are non-fatal */ }
     }
+    // Build and cache the text context — reused on every message (no re-fetch)
+    contextCacheRef.current = buildContextFromSheets(dept, rawResults);
+    contextCacheTimeRef.current = Date.now();
+    setSyncing(false);
     setAllSheets(sheets);
+    if (forceRefresh) toast.success('Data synced');
     setDataLoaded(true);
   };
 
@@ -616,16 +628,22 @@ export default function BotPage() {
 
       // ── Normal / file request ─────────────────────────────────────────────
       const wantsFile = isFileRequest(userMsg);
-      setSyncing(true);
 
+      // Build context from cache — no Google Sheets re-fetch on every message
       let freshContext;
       const activeSingleSheet = selectedSheetRef.current;
       if (activeSingleSheet) {
+        // Single-sheet mode: build instantly from in-memory rows
         freshContext = `Department: ${dept.name}\nDescription: ${dept.description}\n\n${sheetToText(activeSingleSheet)}`;
+      } else if (contextCacheRef.current) {
+        freshContext = contextCacheRef.current;
       } else {
-        freshContext = await fetchDeptContext(dept);
+        // Cache miss (edge case on first load) — fetch once then cache
+        setSyncing(true);
+        await loadDataSources(dept);
+        freshContext = contextCacheRef.current || `Department: ${dept.name}\nDescription: ${dept.description}`;
+        setSyncing(false);
       }
-      setSyncing(false);
 
       const systemPrompt = dept.systemPrompt || `You are the AI assistant for ${dept.name}.`;
 
@@ -816,6 +834,26 @@ export default function BotPage() {
               {!allSheets.length && (
                 <div style={{ padding: '8px 10px', color: '#5a6878', fontSize: 12 }}>No sheets loaded yet</div>
               )}
+
+              {/* Manual sync */}
+              <div style={{ borderTop: '1px solid #2a3340', marginTop: 6, paddingTop: 6 }}>
+                <button
+                  onClick={() => {
+                    setSheetPickerOpen(false);
+                    const dept = departmentRef.current;
+                    if (dept) loadDataSources(dept, true);
+                  }}
+                  style={{
+                    width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: 8,
+                    background: 'transparent', border: '1px solid transparent',
+                    color: '#5a6878', fontSize: 11, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 6,
+                  }}
+                >
+                  <RefreshCw size={11} />
+                  Sync latest data
+                </button>
+              </div>
             </div>
           )}
         </div>

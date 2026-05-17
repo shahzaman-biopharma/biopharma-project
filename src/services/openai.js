@@ -72,7 +72,9 @@ VOICE MODE — STRICT RULES (override all formatting rules):
 - TONE: Natural, warm, spoken-word style as if talking face to face
 `;
 
-const MODELS = ['gpt-4o-mini', 'gpt-3.5-turbo'];
+// Primary model: set VITE_OPENAI_MODEL in .env to override (e.g. gpt-4o, o4-mini)
+const PRIMARY = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o-mini';
+const MODELS = PRIMARY === 'gpt-4o-mini' ? ['gpt-4o-mini', 'gpt-3.5-turbo'] : [PRIMARY];
 
 function getStatus(err) {
   return err?.status ?? err?.response?.status ?? 0;
