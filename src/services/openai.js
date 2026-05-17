@@ -1,9 +1,5 @@
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true,
-});
+// All OpenAI calls route through /api/chat (Vercel serverless).
+// The API key lives on the server — never in the browser bundle.
 
 // ─── Data accuracy — highest priority, placed first in system prompt ──────────
 const DATA_ACCURACY_RULES = `
@@ -80,56 +76,44 @@ VOICE MODE — STRICT RULES (override all formatting rules):
 - TONE: Natural, warm, spoken-word style as if talking face to face
 `;
 
-// ─── Model chain ─────────────────────────────────────────────────────────────
-// Override primary via VITE_OPENAI_MODEL in .env / Vercel env vars
-const PRIMARY = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o';
-const MODELS = [PRIMARY, 'gpt-4o-mini']
-  .filter((m, i, arr) => arr.indexOf(m) === i); // deduplicate
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-function getStatus(err) {
-  return err?.status ?? err?.response?.status ?? 0;
-}
-function isRateLimit(err) {
-  const s = getStatus(err);
-  const m = String(err?.message ?? err?.error?.message ?? '').toLowerCase();
-  return s === 429 || m.includes('rate limit') || m.includes('quota') || m.includes('exceeded');
-}
-
-// ─── tryCreate: model fallback + 429 exponential backoff ─────────────────────
-// 429 → wait and retry same model (5 s → 15 s → 40 s), then try next model
-// 404 / 400 → model unavailable, try next model immediately
-// other errors → throw immediately
+// ─── tryCreate: calls /api/chat proxy with 429 exponential backoff ─────────
+// /api/chat handles model selection (gpt-4o → gpt-4o-mini) server-side.
+// Client retries on 429: waits 5 s → 15 s → 40 s before giving up.
 const BACKOFF_MS = [5_000, 15_000, 40_000];
 
 async function tryCreate(params) {
-  let lastErr;
-  for (const model of MODELS) {
-    for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
-      try {
-        return await openai.chat.completions.create({ ...params, model });
-      } catch (err) {
-        lastErr = err;
-        const status = getStatus(err);
-
-        if (isRateLimit(err)) {
-          if (attempt < BACKOFF_MS.length) {
-            console.warn(`[openai] 429 on ${model}, retrying in ${BACKOFF_MS[attempt] / 1000}s…`);
-            await sleep(BACKOFF_MS[attempt]);
-            continue; // retry same model after wait
-          }
-          break; // all retries exhausted for this model → try next
-        }
-
-        if (status === 404 || status === 400) break; // model not available → next model
-
-        throw err; // unknown error → surface immediately
-      }
+  for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
+    let response;
+    try {
+      response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+    } catch {
+      // Network / offline error
+      if (attempt < BACKOFF_MS.length) { await sleep(BACKOFF_MS[attempt]); continue; }
+      throw new Error('Network error. Check your connection and try again.');
     }
+
+    if (response.ok) return response.json();
+
+    if (response.status === 429) {
+      if (attempt < BACKOFF_MS.length) {
+        console.warn(`[AI] Rate limited — retrying in ${BACKOFF_MS[attempt] / 1000}s…`);
+        await sleep(BACKOFF_MS[attempt]);
+        continue;
+      }
+      throw new Error('Service is temporarily busy. Please wait a moment and try again.');
+    }
+
+    // Any other error
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData?.error?.message || `API error ${response.status}`);
   }
-  throw new Error('Service is temporarily busy. Please wait a moment and try again.');
 }
 
 // ─── Chunked reading — splits large dataContext into safe-size pieces ─────────
@@ -144,7 +128,7 @@ function splitContextIntoChunks(text, maxChars = CHUNK_CHARS) {
   if (text.length <= maxChars) return [text];
 
   // Prefer splitting at sheet boundaries so each chunk is a whole sheet
-  const sections = text.split(/(?=^=== Sheet:/m));
+  const sections = text.split(/(?=^=== Sheet:)/m);
   const chunks = [];
   let current = '';
 
@@ -540,4 +524,3 @@ export async function briefChat({ context, question }) {
   return response.choices[0].message.content.trim();
 }
 
-export default openai;
