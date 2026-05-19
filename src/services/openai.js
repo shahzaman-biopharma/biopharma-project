@@ -509,6 +509,84 @@ Return ONLY valid JSON — no markdown, no explanation, no \`\`\`.`;
   }
 }
 
+// ─── Validation Dashboard Analysis ───────────────────────────────────────────
+
+function sheetToText(name, rows, maxRows = 800) {
+  if (!rows || rows.length < 1) return `=== ${name} ===\n(empty sheet)`;
+  const headers = rows[0] || [];
+  const data = rows.slice(1, maxRows + 1);
+  const truncated = rows.length - 1 > maxRows;
+  return `=== ${name} (${rows.length - 1} data rows${truncated ? `, showing first ${maxRows}` : ''}) ===\n` +
+    headers.join(' | ') + '\n' +
+    data.map(r => headers.map((_, i) => String(r[i] ?? '')).join(' | ')).join('\n');
+}
+
+export async function generateValidationDashboard({ dvlSheet, projSheet }) {
+  const dvlText  = sheetToText(dvlSheet.sheetName,  dvlSheet.rows,  1000);
+  const projText = sheetToText(projSheet.sheetName, projSheet.rows,  400);
+
+  const prompt = `You are a CRA (Clinical Research Associate) data validation analyst for a biopharma clinical trials site.
+
+TASK: Analyze the two sheets below and return a structured JSON dashboard. Use ONLY numbers from the actual data — never fabricate.
+
+=== PROJECTION SHEET ===
+${projText}
+
+=== DVL SHEET (Data Verification Log) ===
+${dvlText}
+
+=== GOALS LOGIC (CRITICAL) ===
+The projection sheet has "Original Goals" and "Updated Goals" column groups (or separate sections/rows labeled as such).
+RULE 1: Check every "Updated Goals" cell. If ALL Updated Goals values = 0 → set goalsLogic="original" and use Original Goals for all calculations.
+RULE 2: If ANY Updated Goals row has a non-zero value → set goalsLogic="updated". For each row: use Updated Goal if non-zero, else use Original Goal.
+RULE 3: If any row's Updated Goal is LESS than its Original Goal (a reduction), use Updated Goals for the entire sheet.
+
+=== WHAT TO EXTRACT ===
+From PROJECTION: effective goals per protocol (screening goal, rand goal, total visit goal), sum them for KPIs.
+From DVL: count ALL visits (total tally), then break down by visit type (Screening, Randomization, Follow-up, Pre-screening, Unscheduled, Procedure), by PI, by protocol.
+For WEEKLY: group DVL visit dates into consecutive weekly ranges based on date column. Label W1, W2, W3... assign month as "jan"/"feb"/"mar"/"apr"/"may"/"jun"/"jul"/"aug"/"sep"/"oct"/"nov"/"dec".
+For KPIs: totalVisitsAchieved = sum from projection "achieved/actual" column if present, else count DVL screening+rand+fu types only (not pre-screen/unscheduled/procedures to match projection definition).
+achievementPct = Math.round((totalVisitsAchieved / totalVisitGoal) * 100).
+
+Return ONLY valid JSON — no markdown, no explanation, no \`\`\`:
+{
+  "header": { "site": "string", "period": "string e.g. Q2 2026", "goalsLogic": "original|updated|mixed", "goalsNote": "string" },
+  "kpis": {
+    "totalVisitGoal": 0,
+    "totalVisitsAchieved": 0,
+    "totalVisitsRemaining": 0,
+    "dvlTotalTally": 0,
+    "achievementPct": 0,
+    "screeningGoalTotal": 0,
+    "screeningAchieved": 0,
+    "randGoalTotal": 0,
+    "randAchieved": 0
+  },
+  "piBreakdown": [{ "pi": "", "visits": 0, "screens": 0, "rands": 0, "fu": 0 }],
+  "protocols": [{ "pi": "", "protocol": "", "indication": "", "isActive": true, "q2Goal": 0, "screenGoal": 0, "randGoal": 0, "screenActual": 0, "randActual": 0 }],
+  "weekly": [{ "week": "W1", "dates": "Jan 1-7", "total": 0, "screens": 0, "rands": 0, "fu": 0, "pre": 0, "month": "jan" }],
+  "alerts": [{ "type": "success|warn|info|danger", "title": "", "message": "" }],
+  "fieldComparison": [{ "field": "", "projVal": "", "dvlVal": "", "status": "match|warn|mismatch|note|neutral", "note": "" }],
+  "protocolScreenComparison": [{ "protocol": "", "pi": "", "screenGoal": 0, "screenActual": 0, "status": "met|under|over" }]
+}`;
+
+  const response = await tryCreate({
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.1,
+    max_completion_tokens: 4000,
+  });
+
+  const raw = response.choices[0].message.content.trim()
+    .replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '');
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) { try { return JSON.parse(match[0]); } catch {} }
+    throw new Error('GPT returned invalid JSON for validation dashboard. Try again.');
+  }
+}
+
 export async function briefChat({ context, question }) {
   const response = await tryCreate({
     messages: [

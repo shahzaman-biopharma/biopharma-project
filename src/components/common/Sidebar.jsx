@@ -4,12 +4,13 @@ import { useTheme } from '../../context/ThemeContext';
 import { useNotifications } from '../../context/NotificationsContext';
 import {
   Dna, LayoutDashboard, FileText, Settings,
-  LogOut, ChevronRight, Shield, Sun, Moon, X, Bell,
+  LogOut, ChevronRight, Shield, Sun, Moon, X, Bell, ClipboardCheck,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/validation', icon: ClipboardCheck, label: 'Data Validation' },
   { to: '/reports', icon: FileText, label: 'Reports' },
 ];
 

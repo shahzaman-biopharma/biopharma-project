@@ -242,6 +242,17 @@ export async function saveAdminTabPermissions(data) {
   await setDoc(doc(db, 'settings', 'adminPermissions'), data, { merge: true });
 }
 
+// ─── Validation Settings ──────────────────────────────────────────────────────
+
+export async function getValidationSettings() {
+  const snap = await getDoc(doc(db, 'settings', 'validation'));
+  return snap.exists() ? snap.data() : { dataSources: [] };
+}
+
+export async function saveValidationSettings(data) {
+  await setDoc(doc(db, 'settings', 'validation'), data, { merge: true });
+}
+
 
 export async function markAllNotificationsRead(userId, isAdmin) {
   const recipientIds = isAdmin ? [userId, 'admins'] : [userId];

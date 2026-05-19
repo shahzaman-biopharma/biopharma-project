@@ -7,6 +7,7 @@ import {
   getReportSettings, saveReportSettings,
   createNotification,
   updateDeptUserPermission, getAdminTabPermissions, saveAdminTabPermissions,
+  getValidationSettings, saveValidationSettings,
 } from '../services/firestore';
 import { generateDepartmentPrompt } from '../services/openai';
 import { analyzeAndBuildDashboard } from '../utils/analyzeAndBuildDashboard';
@@ -14,7 +15,7 @@ import {
   Settings, Plus, Trash2, Edit2, Users, Bot, Database, Save,
   Loader2, X, Shield, UserPlus, ChevronDown, ChevronUp,
   Sparkles, Key, Globe, FileText, Check, Eye, EyeOff,
-  ShieldCheck, Lock, Table2,
+  ShieldCheck, Lock, Table2, ClipboardCheck,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -25,6 +26,7 @@ const ALL_TABS = [
   { id: 'users', label: 'Users', icon: Users },
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'access', label: 'Dept Access', icon: Lock },
+  { id: 'validation', label: 'Validation', icon: ClipboardCheck },
 ];
 const SUPER_TAB = { id: 'permissions', label: 'Role Permissions', icon: ShieldCheck };
 
@@ -674,6 +676,12 @@ export default function SettingsPage() {
   const [adminTabPerms, setAdminTabPerms] = useState({ departments: true, users: true, reports: true, access: true });
   const [savingAdminPerms, setSavingAdminPerms] = useState(false);
 
+  // Validation settings
+  const [validationSources, setValidationSources] = useState([]);
+  const [savingValidation, setSavingValidation] = useState(false);
+  const [newValSource, setNewValSource] = useState({ type: 'googlesheet', name: '', url: '' });
+  const [showAddValSource, setShowAddValSource] = useState(false);
+
   if (!isAdmin) return <Navigate to="/dashboard" replace />;
 
   useEffect(() => {
@@ -697,6 +705,10 @@ export default function SettingsPage() {
         const ap = await getAdminTabPermissions();
         if (ap) setAdminTabPerms(ap);
       } catch { /* no adminPermissions doc yet — use defaults */ }
+      try {
+        const vs = await getValidationSettings();
+        if (vs?.dataSources) setValidationSources(vs.dataSources);
+      } catch { /* validation settings not yet created */ }
       setLoading(false);
     };
     load();
@@ -955,6 +967,30 @@ export default function SettingsPage() {
       setCreatingUser(false);
     }
   };
+
+  const handleSaveValidation = async () => {
+    setSavingValidation(true);
+    try {
+      await saveValidationSettings({ dataSources: validationSources });
+      toast.success('Validation sources saved!');
+    } catch {
+      toast.error('Failed to save validation settings');
+    } finally {
+      setSavingValidation(false);
+    }
+  };
+
+  const addValSource = () => {
+    if (!newValSource.name.trim()) { toast.error('Enter source name'); return; }
+    if ((newValSource.type === 'googlesheet' || newValSource.type === 'onedrive') && !newValSource.url.trim()) {
+      toast.error('Enter URL'); return;
+    }
+    setValidationSources(p => [...p, { ...newValSource, id: Date.now() }]);
+    setNewValSource({ type: 'googlesheet', name: '', url: '' });
+    setShowAddValSource(false);
+  };
+
+  const removeValSource = (id) => setValidationSources(p => p.filter(s => s.id !== id));
 
   const visibleTabs = isSuperAdmin
     ? [...ALL_TABS, SUPER_TAB]
@@ -1564,6 +1600,148 @@ export default function SettingsPage() {
           onSave={handleSaveAdminPerms}
           saving={savingAdminPerms}
         />
+      ) : tab === 'validation' ? (
+        /* ─── VALIDATION DATA SOURCES TAB ─── */
+        <div className="max-w-3xl space-y-5">
+          <div className="glass rounded-2xl p-4 sm:p-6">
+            <div className="flex items-center gap-2 mb-1">
+              <ClipboardCheck size={15} className="text-green-400" />
+              <h2 className="text-white font-semibold">Validation Data Sources</h2>
+            </div>
+            <p className="text-slate-400 text-xs mb-5">
+              Add the Google Sheets, Excel, or OneDrive files used in the Data Validation Dashboard.
+              These sources will appear as selectable sheets when building the validation report.
+            </p>
+
+            {/* Source list */}
+            <div className="space-y-2.5 mb-4">
+              {validationSources.length === 0 && (
+                <div className="text-center py-10 rounded-xl"
+                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <Database size={28} className="text-slate-600 mx-auto mb-2" />
+                  <p className="text-slate-500 text-sm">No validation sources added yet.</p>
+                </div>
+              )}
+              {validationSources.map(src => (
+                <div key={src.id} className="flex items-center gap-3 p-3.5 rounded-xl"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.2)' }}>
+                    <Database size={14} className="text-green-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm font-medium">{src.name}</p>
+                    <p className="text-slate-500 text-xs capitalize">{src.type}{src.url ? ` — ${src.url.substring(0, 60)}…` : ''}</p>
+                  </div>
+                  <button
+                    onClick={() => removeValSource(src.id)}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:text-red-400 transition-colors flex-shrink-0"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Add source form */}
+            {showAddValSource ? (
+              <div className="p-4 rounded-xl mb-4"
+                style={{ background: 'rgba(74,222,128,0.04)', border: '1px solid rgba(74,222,128,0.15)' }}>
+                <p className="text-green-400 text-xs font-semibold mb-3 uppercase tracking-wide">New Source</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1.5 block">Source Name *</label>
+                    <input
+                      className="w-full px-3 py-2.5 rounded-xl text-white text-sm outline-none"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(74,222,128,0.2)' }}
+                      placeholder="e.g. DVL Master Sheet"
+                      value={newValSource.name}
+                      onChange={e => setNewValSource(p => ({ ...p, name: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1.5 block">Type</label>
+                    <select
+                      className="w-full px-3 py-2.5 rounded-xl text-white text-sm outline-none"
+                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(74,222,128,0.2)' }}
+                      value={newValSource.type}
+                      onChange={e => setNewValSource(p => ({ ...p, type: e.target.value, url: '' }))}
+                    >
+                      <option value="googlesheet">Google Sheet</option>
+                      <option value="onedrive">OneDrive / Excel</option>
+                      <option value="csv">CSV (paste URL)</option>
+                    </select>
+                  </div>
+                  {(newValSource.type === 'googlesheet' || newValSource.type === 'onedrive' || newValSource.type === 'csv') && (
+                    <div className="sm:col-span-2">
+                      <label className="text-xs text-slate-400 mb-1.5 block">
+                        {newValSource.type === 'googlesheet' ? 'Google Sheet URL or ID' :
+                         newValSource.type === 'onedrive' ? 'OneDrive Share Link' : 'CSV URL'}
+                      </label>
+                      <input
+                        className="w-full px-3 py-2.5 rounded-xl text-white text-sm outline-none font-mono"
+                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(74,222,128,0.2)' }}
+                        placeholder={newValSource.type === 'googlesheet'
+                          ? 'https://docs.google.com/spreadsheets/d/...'
+                          : newValSource.type === 'onedrive'
+                          ? 'https://1drv.ms/...'
+                          : 'https://example.com/data.csv'}
+                        value={newValSource.url}
+                        onChange={e => setNewValSource(p => ({ ...p, url: e.target.value }))}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => { setShowAddValSource(false); setNewValSource({ type: 'googlesheet', name: '', url: '' }); }}
+                    className="px-4 py-2 rounded-xl text-sm text-slate-400 hover:text-white transition-colors"
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={addValSource}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white"
+                    style={{ background: 'rgba(74,222,128,0.15)', border: '1px solid rgba(74,222,128,0.3)', color: '#4ade80' }}
+                  >
+                    <Plus size={14} /> Add Source
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAddValSource(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium mb-4 transition-all"
+                style={{ background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.2)', color: '#4ade80' }}
+              >
+                <Plus size={14} /> Add Data Source
+              </button>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                onClick={handleSaveValidation}
+                disabled={savingValidation}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white gradient-btn disabled:opacity-50"
+              >
+                {savingValidation ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save Sources
+              </button>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl"
+            style={{ background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.15)' }}>
+            <p className="text-blue-400 text-xs font-medium mb-1">How to use</p>
+            <p className="text-slate-400 text-xs leading-relaxed">
+              After saving sources, go to <strong className="text-slate-300">Data Validation</strong> in the sidebar.
+              You will be prompted to select which sheet is the DVL sheet and which is the Projection sheet.
+              GPT will then analyze both sheets and build a full validation dashboard.
+            </p>
+          </div>
+        </div>
       ) : null}
       </>
       )}
