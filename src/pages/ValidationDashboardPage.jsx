@@ -9,11 +9,11 @@ import {
 } from 'recharts';
 import {
   ShieldCheck, RotateCcw, Settings, Loader2, AlertTriangle,
-  CheckCircle2, Info, ChevronRight, Database,
+  CheckCircle2, Info, ChevronRight, ChevronDown, Database, Search, X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-/* ── Palette (matches HTML mockup) ─────────────────────────────────────────── */
+/* ── Palette ──────────────────────────────────────────────────────────────────── */
 const P = {
   bg: '#0c0e13', card: '#13161d', line: 'rgba(255,255,255,0.07)',
   ink: '#f0f2f7', sub: '#8b90a0', faint: '#555b6e', deep: '#2a2f3c',
@@ -22,7 +22,7 @@ const P = {
 };
 const COLORS = [P.green, P.blue, P.violet, P.amber, P.teal, P.red, P.orange];
 
-/* ── Tiny shared components ─────────────────────────────────────────────────── */
+/* ── Shared mini-components ──────────────────────────────────────────────────── */
 function MCard({ label, value, sub, color = P.blue, accent }) {
   return (
     <div style={{ background: P.card, border: `0.5px solid ${P.line}`, borderRadius: 12, padding: '16px 18px', position: 'relative', overflow: 'hidden' }}>
@@ -33,7 +33,6 @@ function MCard({ label, value, sub, color = P.blue, accent }) {
     </div>
   );
 }
-
 function Card({ children, style }) {
   return (
     <div style={{ background: P.card, border: `0.5px solid ${P.line}`, borderRadius: 14, padding: '20px 22px', marginBottom: 16, ...style }}>
@@ -41,11 +40,9 @@ function Card({ children, style }) {
     </div>
   );
 }
-
 function CardTitle({ children }) {
   return <div style={{ fontSize: 11, fontWeight: 500, color: P.faint, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 16 }}>{children}</div>;
 }
-
 function Badge({ status }) {
   const cfg = {
     match:    { bg: 'rgba(74,222,128,0.12)',  color: P.green,  border: 'rgba(74,222,128,0.2)',  label: 'match' },
@@ -64,7 +61,6 @@ function Badge({ status }) {
     </span>
   );
 }
-
 function AlertBanner({ type, title, message }) {
   const cfg = {
     success: { bg: 'rgba(74,222,128,0.06)',  border: 'rgba(74,222,128,0.15)',  color: P.green, icon: <CheckCircle2 size={15} /> },
@@ -80,7 +76,6 @@ function AlertBanner({ type, title, message }) {
     </div>
   );
 }
-
 function ProgressRing({ pct, color = P.green }) {
   const r = 32, circ = 2 * Math.PI * r;
   return (
@@ -95,19 +90,84 @@ function ProgressRing({ pct, color = P.green }) {
   );
 }
 
-/* ── STEP 1 & 2: Sheet selection ─────────────────────────────────────────────── */
-function SelectSheetStep({ sheets, onSelect, stepLabel, stepNum, otherLabel }) {
-  const grouped = sheets.reduce((acc, s) => {
-    if (!acc[s.sourceName]) acc[s.sourceName] = [];
-    acc[s.sourceName].push(s);
-    return acc;
-  }, {});
+/* ── Sheet rows fetcher (outside component — no closures needed) ─────────────── */
+async function fetchSheetRows(sourceUrl, sheetName) {
+  const match = (sourceUrl || '').match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match) {
+    const sheetId = match[1];
+    const isExcel = /rtpof=true/.test(sourceUrl);
+    const params = new URLSearchParams({ sheetId, sheet: sheetName });
+    if (isExcel) params.set('excel', '1');
+    const res = await fetch(`/api/sheets?${params}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to fetch sheet data');
+    const s = data.sheets?.find(s => s.name === sheetName) || data.sheets?.[0];
+    return s?.rows || [];
+  }
+  // OneDrive / CSV — fetch all then pick sheet
+  const { sheets } = await fetchGoogleSheetRaw(sourceUrl);
+  return sheets[sheetName] || Object.values(sheets)[0] || [];
+}
+
+/* ── Source + Sheet Picker (2-step wizard) ───────────────────────────────────── */
+function SourceSheetPicker({ sources, sourceSheets, onLoadSheets, onSelect, stepLabel, stepNum, otherPick }) {
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState(null);
+
+  // When user types a query, trigger loading for all sources
+  useEffect(() => {
+    if (!query.trim()) return;
+    sources.forEach(src => {
+      if (!sourceSheets[src.id]?.names && !sourceSheets[src.id]?.loading) {
+        onLoadSheets(src);
+      }
+    });
+  }, [query, sources, sourceSheets, onLoadSheets]);
+
+  const handleExpand = (src) => {
+    const next = expanded === src.id ? null : src.id;
+    setExpanded(next);
+    if (next && !sourceSheets[src.id]?.names && !sourceSheets[src.id]?.loading) {
+      onLoadSheets(src);
+    }
+  };
+
+  // All loaded sheets (for search)
+  const allLoaded = sources.flatMap(src =>
+    (sourceSheets[src.id]?.names || []).map(name => ({
+      sourceId: src.id, sourceName: src.name, sourceUrl: src.url, sheetName: name,
+    }))
+  );
+  const q = query.toLowerCase().trim();
+  const searchResults = q ? allLoaded.filter(s =>
+    s.sheetName.toLowerCase().includes(q) || s.sourceName.toLowerCase().includes(q)
+  ) : null;
+  const anyLoading = q ? sources.some(src => sourceSheets[src.id]?.loading) : false;
+
+  const inputBase = {
+    background: P.card, border: `0.5px solid ${P.line}`, outline: 'none',
+    fontFamily: 'inherit', color: P.ink,
+  };
+
+  const SheetBtn = ({ sourceId, sourceName, sourceUrl, sheetName }) => (
+    <button
+      onClick={() => onSelect({ sourceId, sourceName, sourceUrl, sheetName })}
+      style={{ ...inputBase, borderRadius: 8, padding: '9px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left', width: '100%', transition: 'border-color 0.15s' }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = P.green}
+      onMouseLeave={e => e.currentTarget.style.borderColor = P.line}
+    >
+      <span style={{ fontSize: 13, color: P.ink }}>{sheetName}</span>
+      <ChevronRight size={14} style={{ color: P.faint, flexShrink: 0 }} />
+    </button>
+  );
 
   return (
-    <div style={{ background: P.bg, minHeight: '100%', padding: '32px 24px' }}>
-      <div style={{ maxWidth: 580, margin: '0 auto' }}>
-        {/* Progress dots */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 28 }}>
+    <div style={{ background: P.bg, minHeight: '100%', padding: '28px 20px' }}>
+      <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+      <div style={{ maxWidth: 600, margin: '0 auto' }}>
+
+        {/* Step progress */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}>
           {[1, 2].map((n, i) => (
             <div key={n} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{
@@ -115,7 +175,7 @@ function SelectSheetStep({ sheets, onSelect, stepLabel, stepNum, otherLabel }) {
                 fontSize: 12, fontWeight: 600,
                 background: n <= stepNum ? P.green : 'rgba(255,255,255,0.06)',
                 color: n <= stepNum ? '#0c0e13' : P.faint,
-                border: n === stepNum ? `2px solid ${P.green}` : '2px solid transparent',
+                border: `2px solid ${n === stepNum ? P.green : 'transparent'}`,
               }}>{n}</div>
               {i === 0 && <div style={{ width: 40, height: 1.5, background: stepNum > 1 ? P.green : 'rgba(255,255,255,0.08)', borderRadius: 1 }} />}
             </div>
@@ -123,67 +183,144 @@ function SelectSheetStep({ sheets, onSelect, stepLabel, stepNum, otherLabel }) {
           <span style={{ fontSize: 12, color: P.faint, marginLeft: 4 }}>Step {stepNum} of 2</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+        {/* Title */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
           <ShieldCheck size={20} style={{ color: P.green }} />
           <h2 style={{ fontSize: 20, fontWeight: 600, color: P.ink, letterSpacing: '-0.4px' }}>
             Select <span style={{ color: P.green }}>{stepLabel}</span> Sheet
           </h2>
         </div>
-        <p style={{ fontSize: 13, color: P.faint, marginBottom: 24 }}>
-          {stepLabel === 'DVL' ? 'Select the Data Verification Log sheet containing visit records' : `Select the Projection sheet (${otherLabel ? `DVL: ${otherLabel} selected` : 'contains goals & targets'})`}
+        <p style={{ fontSize: 13, color: P.faint, marginBottom: 20 }}>
+          {stepNum === 1
+            ? 'Select the Data Verification Log sheet containing visit records'
+            : `DVL: "${otherPick?.sheetName}" selected — now pick the Projection / Goals sheet`}
         </p>
 
-        {sheets.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '48px 0', color: P.faint, fontSize: 13 }}>
-            No sheets loaded. Check your data source configuration in Settings → Validation.
+        {/* Search box */}
+        <div style={{ position: 'relative', marginBottom: 20 }}>
+          <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: P.faint, pointerEvents: 'none' }} />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search sheet names across all sources…"
+            style={{ ...inputBase, width: '100%', boxSizing: 'border-box', borderRadius: 10, padding: '10px 36px 10px 34px', fontSize: 13 }}
+          />
+          {query && (
+            <button onClick={() => setQuery('')} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: P.faint, lineHeight: 1, padding: 2 }}>
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Content */}
+        {searchResults !== null ? (
+          /* ── Search results mode ── */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {anyLoading && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: P.faint, marginBottom: 4 }}>
+                <Loader2 size={13} style={{ color: P.green, animation: 'spin 1s linear infinite' }} />
+                Loading sheets from all sources…
+              </div>
+            )}
+            {!anyLoading && searchResults.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: P.faint, fontSize: 13 }}>
+                No sheets match "{query}"
+              </div>
+            )}
+            {searchResults.map(s => (
+              <div key={`${s.sourceId}_${s.sheetName}`}>
+                <div style={{ fontSize: 10, color: P.faint, textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Database size={9} />{s.sourceName}
+                </div>
+                <SheetBtn {...s} />
+              </div>
+            ))}
           </div>
         ) : (
-          Object.entries(grouped).map(([sourceName, sheetList]) => (
-            <div key={sourceName} style={{ marginBottom: 20 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: P.sub, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 8 }}>
-                <Database size={11} />{sourceName}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {sheetList.map(sheet => (
-                  <button key={sheet.sheetName} onClick={() => onSelect(sheet)} style={{
-                    background: P.card, border: `0.5px solid ${P.line}`, borderRadius: 10,
-                    padding: '12px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center',
-                    justifyContent: 'space-between', transition: 'border-color 0.15s',
-                    textAlign: 'left', width: '100%',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = P.green}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = P.line}
-                  >
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 500, color: P.ink }}>{sheet.sheetName}</div>
-                      <div style={{ fontSize: 11, color: P.faint, marginTop: 2 }}>{(sheet.rows.length - 1)} rows · {(sheet.rows[0] || []).length} columns</div>
-                    </div>
-                    <ChevronRight size={16} style={{ color: P.faint }} />
-                  </button>
-                ))}
-              </div>
+          /* ── Source card mode ── */
+          sources.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '48px 0', color: P.faint, fontSize: 13 }}>
+              No data sources configured. Go to Settings → Validation tab to add sources.
             </div>
-          ))
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {sources.map(src => {
+                const loaded = sourceSheets[src.id];
+                const isExp = expanded === src.id;
+                const typeLabel = src.type === 'googlesheet' ? 'Google Sheet' : src.type === 'onedrive' ? 'OneDrive / Excel' : 'CSV';
+                return (
+                  <div key={src.id} style={{ background: P.card, border: `0.5px solid ${isExp ? 'rgba(74,222,128,0.3)' : P.line}`, borderRadius: 12, overflow: 'hidden', transition: 'border-color 0.2s' }}>
+                    {/* Source header row */}
+                    <button
+                      onClick={() => handleExpand(src)}
+                      style={{ width: '100%', padding: '14px 18px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', fontFamily: 'inherit' }}
+                    >
+                      <div style={{ width: 36, height: 36, borderRadius: 9, background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Database size={16} style={{ color: P.green }} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 500, color: P.ink }}>{src.name}</div>
+                        <div style={{ fontSize: 11, color: P.faint, marginTop: 2 }}>
+                          {typeLabel}{loaded?.names ? ` · ${loaded.names.length} sheet${loaded.names.length !== 1 ? 's' : ''}` : ''}
+                        </div>
+                      </div>
+                      {loaded?.loading
+                        ? <Loader2 size={15} style={{ color: P.green, animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+                        : isExp
+                          ? <ChevronDown size={16} style={{ color: P.faint, flexShrink: 0 }} />
+                          : <ChevronRight size={16} style={{ color: P.faint, flexShrink: 0 }} />}
+                    </button>
+
+                    {/* Expanded sheet list */}
+                    {isExp && (
+                      <div style={{ borderTop: `0.5px solid ${P.line}`, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {loaded?.error ? (
+                          <div style={{ fontSize: 12, color: P.red, padding: '8px 4px' }}>
+                            {loaded.error}
+                          </div>
+                        ) : loaded?.loading ? (
+                          <div style={{ fontSize: 13, color: P.faint, padding: '10px 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Loader2 size={13} style={{ color: P.green, animation: 'spin 1s linear infinite' }} />
+                            Loading sheet names…
+                          </div>
+                        ) : (loaded?.names || []).length === 0 ? (
+                          <div style={{ fontSize: 12, color: P.faint, padding: '8px 4px' }}>No sheets found.</div>
+                        ) : (
+                          (loaded.names).map(name => (
+                            <SheetBtn
+                              key={name}
+                              sourceId={src.id}
+                              sourceName={src.name}
+                              sourceUrl={src.url}
+                              sheetName={name}
+                            />
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
         )}
       </div>
     </div>
   );
 }
 
-function AnalyzingScreen({ dvlName, projName }) {
+/* ── Loading screens ─────────────────────────────────────────────────────────── */
+function SpinScreen({ message, sub }) {
   return (
-    <div style={{ background: P.bg, minHeight: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20, padding: 32 }}>
-      <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(74,222,128,0.1)', border: `1px solid rgba(74,222,128,0.25)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Loader2 size={28} style={{ color: P.green, animation: 'spin 1s linear infinite' }} />
+    <div style={{ background: P.bg, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32 }}>
+      <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
+      <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Loader2 size={24} style={{ color: P.green, animation: 'spin 1s linear infinite' }} />
       </div>
       <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: 18, fontWeight: 600, color: P.ink, marginBottom: 6 }}>Analyzing & Validating Data…</div>
-        <div style={{ fontSize: 13, color: P.faint, maxWidth: 360 }}>
-          GPT is comparing <strong style={{ color: P.sub }}>{dvlName}</strong> against <strong style={{ color: P.sub }}>{projName}</strong> — checking goals logic, counting visits, identifying discrepancies.
-        </div>
-        <div style={{ fontSize: 11, color: P.deep, marginTop: 12 }}>This may take 15–30 seconds for large sheets.</div>
+        <div style={{ fontSize: 16, fontWeight: 600, color: P.ink, marginBottom: 4 }}>{message}</div>
+        {sub && <div style={{ fontSize: 12, color: P.faint, maxWidth: 380 }}>{sub}</div>}
       </div>
-      <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }
@@ -193,43 +330,35 @@ function OverviewTab({ spec }) {
   const k = spec.kpis || {};
   const pi = spec.piBreakdown || [];
   const maxPiVisits = Math.max(1, ...pi.map(p => p.visits || 0));
-  const piColors = [P.green, P.blue, P.violet, P.amber, P.teal, P.red, P.orange];
 
   return (
     <div>
       {(spec.alerts || []).filter(a => a.type === 'success').map((a, i) => (
         <AlertBanner key={i} type={a.type} title={a.title} message={a.message} />
       ))}
-
-      {/* KPI row 1 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
-        <MCard label="Total Visit Goal"      value={k.totalVisitGoal}      color={P.blue}   sub="Projection target" />
-        <MCard label="Visits Achieved"       value={k.totalVisitsAchieved} color={P.green}  sub={`${k.achievementPct ?? 0}% complete`} />
+        <MCard label="Total Visit Goal"      value={k.totalVisitGoal}       color={P.blue}   sub="Projection target" />
+        <MCard label="Visits Achieved"       value={k.totalVisitsAchieved}  color={P.green}  sub={`${k.achievementPct ?? 0}% complete`} />
         <MCard label="Visits Remaining"      value={k.totalVisitsRemaining} color={P.amber}  sub="To hit goal" />
         <MCard label="DVL Total Tally"       value={k.dvlTotalTally}        color={P.violet} sub="All DVL visit types" />
       </div>
-
-      {/* KPI row 2 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
-        <MCard label="Screening Goal"        value={k.screeningGoalTotal}  color={P.blue}   sub="Total Q goal" />
-        <MCard label="Screenings Achieved"   value={k.screeningAchieved}   color={P.green}  sub="DVL actual" />
+        <MCard label="Screening Goal"        value={k.screeningGoalTotal}   color={P.blue}   sub="Total Q goal" />
+        <MCard label="Screenings Achieved"   value={k.screeningAchieved}    color={P.green}  sub="DVL actual" />
         <MCard label="Rand Goal"             value={k.randGoalTotal}        color={P.violet} sub="Total Q goal" />
       </div>
-
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
         <MCard label="Randomizations Done"   value={k.randAchieved}         color={P.green}  sub="DVL actual" />
         <MCard label="Rand Remaining"        value={(k.randGoalTotal || 0) - (k.randAchieved || 0)} color={P.amber} sub="To hit goal" />
         <MCard label="Achievement"           value={`${k.achievementPct ?? 0}%`} color={k.achievementPct >= 80 ? P.green : k.achievementPct >= 50 ? P.amber : P.red} sub="Visit goal progress" />
       </div>
-
-      {/* Progress */}
       <Card>
         <CardTitle>Visit Goal Progress</CardTitle>
         <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
           <ProgressRing pct={k.achievementPct} color={k.achievementPct >= 80 ? P.green : k.achievementPct >= 50 ? P.amber : P.red} />
           <div style={{ flex: 1 }}>
             <div style={{ height: 8, background: 'rgba(255,255,255,0.06)', borderRadius: 4, overflow: 'hidden', marginBottom: 8 }}>
-              <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(k.achievementPct || 0, 100)}%`, background: 'linear-gradient(90deg, #4ade80, #22c55e)', transition: 'width 0.8s ease' }} />
+              <div style={{ height: '100%', borderRadius: 4, width: `${Math.min(k.achievementPct || 0, 100)}%`, background: 'linear-gradient(90deg,#4ade80,#22c55e)', transition: 'width 0.8s ease' }} />
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: P.faint }}>
               <span style={{ color: P.green }}>Achieved: {k.totalVisitsAchieved}</span>
@@ -239,8 +368,6 @@ function OverviewTab({ spec }) {
           </div>
         </div>
       </Card>
-
-      {/* PI bars */}
       {pi.length > 0 && (
         <Card>
           <CardTitle>PI Visit Volume — DVL (all types)</CardTitle>
@@ -248,7 +375,7 @@ function OverviewTab({ spec }) {
             <div key={p.pi} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: i < pi.length - 1 ? `0.5px solid rgba(255,255,255,0.04)` : 'none' }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: P.ink, width: 80, flexShrink: 0 }}>{p.pi}</div>
               <div style={{ flex: 1, height: 5, background: 'rgba(255,255,255,0.05)', borderRadius: 3, overflow: 'hidden' }}>
-                <div style={{ height: '100%', borderRadius: 3, width: `${((p.visits || 0) / maxPiVisits) * 100}%`, background: piColors[i % piColors.length], transition: 'width 0.6s ease' }} />
+                <div style={{ height: '100%', borderRadius: 3, width: `${((p.visits || 0) / maxPiVisits) * 100}%`, background: COLORS[i % COLORS.length], transition: 'width 0.6s ease' }} />
               </div>
               <div style={{ fontSize: 12, color: P.sub, textAlign: 'right', flexShrink: 0 }}>
                 <span style={{ color: P.ink, fontWeight: 500 }}>{p.visits}</span>
@@ -271,7 +398,6 @@ function ProtocolsTab({ spec, piFilter, onPIFilter }) {
 
   return (
     <div>
-      {/* PI filter */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ fontSize: 11, color: P.faint, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Filter PI:</span>
         {pis.map(pi => (
@@ -280,26 +406,22 @@ function ProtocolsTab({ spec, piFilter, onPIFilter }) {
             background: piFilter === pi ? '#1a1e28' : 'transparent',
             color: piFilter === pi ? P.ink : P.faint,
             border: piFilter === pi ? `1px solid rgba(255,255,255,0.12)` : `1px solid ${P.line}`,
-            fontWeight: piFilter === pi ? 500 : 400,
-            transition: 'all 0.15s',
+            fontWeight: piFilter === pi ? 500 : 400, transition: 'all 0.15s',
           }}>
             {pi === 'all' ? 'All' : pi}
           </button>
         ))}
       </div>
-
       <Card style={{ overflowX: 'auto', marginBottom: 16 }}>
-        {/* Header */}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.8fr 0.7fr 0.7fr 0.7fr 1fr', gap: 8, paddingBottom: 8, borderBottom: `0.5px solid rgba(255,255,255,0.1)`, marginBottom: 4 }}>
           {['Protocol', 'Indication', 'Status', 'Q Goal', 'Screen', 'Rand', 'Badge'].map(h => (
             <span key={h} style={{ fontSize: 11, color: P.faint, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</span>
           ))}
         </div>
         {filtered.map((p, i) => {
-          let badge = 'neutral', bLabel = 'pending';
-          if (!p.isActive) { badge = 'neutral'; bLabel = 'follow-up'; }
-          else if (p.screenActual > 0 || p.randActual > 0) { badge = 'match'; bLabel = 'active'; }
-          else { badge = 'neutral'; bLabel = 'not started'; }
+          let badge = 'neutral';
+          if (p.screenActual > 0 || p.randActual > 0) badge = 'match';
+          else if (!p.isActive) badge = 'neutral';
           return (
             <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.8fr 0.7fr 0.7fr 0.7fr 1fr', gap: 8, padding: '10px 0', borderBottom: i < filtered.length - 1 ? `0.5px solid rgba(255,255,255,0.04)` : 'none', alignItems: 'center' }}>
               <div>
@@ -307,9 +429,7 @@ function ProtocolsTab({ spec, piFilter, onPIFilter }) {
                 <div style={{ fontSize: 11, color: P.sub, marginTop: 1 }}>{p.pi}</div>
               </div>
               <div style={{ fontSize: 11, color: P.sub }}>{p.indication || '—'}</div>
-              <div style={{ fontSize: 11, color: p.isActive ? P.green : P.faint }}>
-                {p.isActive ? '● Active' : '○ Follow-up'}
-              </div>
+              <div style={{ fontSize: 11, color: p.isActive ? P.green : P.faint }}>{p.isActive ? '● Active' : '○ Follow-up'}</div>
               <div style={{ fontSize: 14, fontWeight: 500, color: (p.q2Goal || 0) > 0 ? P.ink : P.faint }}>{p.q2Goal || '—'}</div>
               <div style={{ fontSize: 14, fontWeight: 500, color: (p.screenActual || 0) > 0 ? P.blue : P.faint }}>{p.screenActual || '—'}</div>
               <div style={{ fontSize: 14, fontWeight: 500, color: (p.randActual || 0) > 0 ? P.green : P.faint }}>{p.randActual || '—'}</div>
@@ -319,18 +439,16 @@ function ProtocolsTab({ spec, piFilter, onPIFilter }) {
         })}
         {filtered.length === 0 && <div style={{ fontSize: 13, color: P.faint, padding: '16px 0' }}>No protocols found.</div>}
       </Card>
-
-      {/* Totals summary */}
       <Card>
         <CardTitle>Totals Summary</CardTitle>
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
           {[
-            { label: 'Total Visit Goal',     val: spec.kpis?.totalVisitGoal,      color: P.blue },
-            { label: 'Screening Goal',        val: spec.kpis?.screeningGoalTotal,  color: P.blue },
-            { label: 'Rand Goal',             val: spec.kpis?.randGoalTotal,       color: P.green },
-            { label: 'Screens Achieved',      val: spec.kpis?.screeningAchieved,   color: P.amber },
-            { label: 'Rands Achieved',        val: spec.kpis?.randAchieved,        color: P.green },
-            { label: 'Visits Achieved',       val: spec.kpis?.totalVisitsAchieved, color: P.violet },
+            { label: 'Total Visit Goal',   val: spec.kpis?.totalVisitGoal,      color: P.blue },
+            { label: 'Screening Goal',      val: spec.kpis?.screeningGoalTotal,  color: P.blue },
+            { label: 'Rand Goal',           val: spec.kpis?.randGoalTotal,       color: P.green },
+            { label: 'Screens Achieved',    val: spec.kpis?.screeningAchieved,   color: P.amber },
+            { label: 'Rands Achieved',      val: spec.kpis?.randAchieved,        color: P.green },
+            { label: 'Visits Achieved',     val: spec.kpis?.totalVisitsAchieved, color: P.violet },
           ].map(t => (
             <div key={t.label} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.5px', color: t.color }}>{t.val ?? '—'}</div>
@@ -350,12 +468,10 @@ function WeeklyTab({ spec, monthFilter, onMonthFilter }) {
   const filtered = monthFilter === 'all' ? allWeeks : allWeeks.filter(w => w.month === monthFilter);
   const maxTotal = Math.max(1, ...filtered.map(w => w.total || 0));
   const sum = (key) => filtered.reduce((s, w) => s + (w[key] || 0), 0);
-
   const MONTH_LABELS = { jan:'January', feb:'February', mar:'March', apr:'April', may:'May', jun:'June', jul:'July', aug:'August', sep:'September', oct:'October', nov:'November', dec:'December' };
 
   return (
     <div>
-      {/* Month filter */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
         {months.map(m => (
           <button key={m} onClick={() => onMonthFilter(m)} style={{
@@ -369,16 +485,12 @@ function WeeklyTab({ spec, monthFilter, onMonthFilter }) {
           </button>
         ))}
       </div>
-
-      {/* Summary KPIs */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
-        <MCard label="Total Visits"     value={sum('total')}   color={P.blue} />
-        <MCard label="Screenings"       value={sum('screens')} color={P.green} />
-        <MCard label="Randomizations"   value={sum('rands')}   color={P.violet} />
-        <MCard label="Follow-ups"       value={sum('fu')}      color={P.amber} />
+        <MCard label="Total Visits"   value={sum('total')}   color={P.blue} />
+        <MCard label="Screenings"     value={sum('screens')} color={P.green} />
+        <MCard label="Randomizations" value={sum('rands')}   color={P.violet} />
+        <MCard label="Follow-ups"     value={sum('fu')}      color={P.amber} />
       </div>
-
-      {/* Week cards */}
       {filtered.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))', gap: 10, marginBottom: 16 }}>
           {filtered.map((w, i) => {
@@ -394,10 +506,10 @@ function WeeklyTab({ spec, monthFilter, onMonthFilter }) {
                 </div>
                 <div style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-1px', color: P.ink, marginBottom: 8 }}>{w.total}</div>
                 {[
-                  { color: P.blue,   label: 'Screen', val: w.screens },
-                  { color: P.green,  label: 'Rand',   val: w.rands },
-                  { color: '#6b7280',label: 'F/U',    val: w.fu },
-                  { color: P.amber,  label: 'Pre',    val: w.pre },
+                  { color: P.blue,    label: 'Screen', val: w.screens },
+                  { color: P.green,   label: 'Rand',   val: w.rands },
+                  { color: '#6b7280', label: 'F/U',    val: w.fu },
+                  { color: P.amber,   label: 'Pre',    val: w.pre },
                 ].map(row => (
                   <div key={row.label} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginBottom: 2 }}>
                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: row.color, flexShrink: 0 }} />
@@ -413,8 +525,6 @@ function WeeklyTab({ spec, monthFilter, onMonthFilter }) {
           })}
         </div>
       )}
-
-      {/* Chart */}
       <Card>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <CardTitle>Visit Volume Trend</CardTitle>
@@ -444,14 +554,11 @@ function WeeklyTab({ spec, monthFilter, onMonthFilter }) {
 /* ── Validation Tab ──────────────────────────────────────────────────────────── */
 function ValidationTab({ spec }) {
   const comparisons = spec.protocolScreenComparison || [];
-
   return (
     <div>
       {(spec.alerts || []).map((a, i) => (
         <AlertBanner key={i} type={a.type} title={a.title} message={a.message} />
       ))}
-
-      {/* Field comparison table */}
       <Card>
         <CardTitle>Field-by-field Comparison</CardTitle>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.2fr 0.8fr 2fr', gap: 8, paddingBottom: 8, borderBottom: `0.5px solid rgba(255,255,255,0.1)`, marginBottom: 4 }}>
@@ -469,8 +576,6 @@ function ValidationTab({ spec }) {
           </div>
         ))}
       </Card>
-
-      {/* Protocol screen comparison */}
       {comparisons.length > 0 && (
         <Card>
           <CardTitle>Protocol: Screening Goal vs Actual</CardTitle>
@@ -499,9 +604,10 @@ function ValidationTab({ spec }) {
 /* ── Main Page ───────────────────────────────────────────────────────────────── */
 export default function ValidationDashboardPage() {
   const [pageState, setPageState] = useState('loading');
-  const [sheets, setSheets] = useState([]);
-  const [dvlSheet, setDvlSheet] = useState(null);
-  const [projSheet, setProjSheet] = useState(null);
+  const [sources, setSources] = useState([]);
+  const [sourceSheets, setSourceSheets] = useState({});  // { [srcId]: { loading, error, names } }
+  const [dvlPick, setDvlPick] = useState(null);          // { sourceId, sourceName, sourceUrl, sheetName }
+  const [projPick, setProjPick] = useState(null);
   const [spec, setSpec] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [piFilter, setPiFilter] = useState('all');
@@ -511,25 +617,13 @@ export default function ValidationDashboardPage() {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
 
+  /* ── Load config from Firestore (just source metadata, no data fetch) ── */
   const loadConfig = useCallback(async () => {
+    setPageState('loading');
     try {
       const config = await getValidationSettings();
       if (!config?.dataSources?.length) { setPageState('no-config'); return; }
-      setPageState('fetching');
-      const loaded = [];
-      for (const src of config.dataSources) {
-        if (!src.url) continue;
-        try {
-          const { sheets: rawSheets } = await fetchGoogleSheetRaw(src.url);
-          Object.entries(rawSheets).forEach(([sheetName, rows]) => {
-            loaded.push({ sourceName: src.name || 'Data', sheetName, rows });
-          });
-        } catch (err) {
-          console.warn(`Validation: cannot fetch "${src.name}":`, err.message);
-        }
-      }
-      if (!loaded.length) { setErrMsg('Could not load any sheets from configured data sources.'); setPageState('error'); return; }
-      setSheets(loaded);
+      setSources(config.dataSources);
       setPageState('select-dvl');
     } catch (err) {
       setErrMsg(err.message);
@@ -539,16 +633,61 @@ export default function ValidationDashboardPage() {
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
 
-  const handleDvlSelect = (sheet) => {
-    setDvlSheet(sheet);
+  /* ── Lazy-load sheet names for a specific source ── */
+  const loadSourceSheets = useCallback(async (src) => {
+    setSourceSheets(p => {
+      if (p[src.id]?.names || p[src.id]?.loading) return p;
+      return { ...p, [src.id]: { loading: true, error: null, names: null } };
+    });
+    try {
+      const url = src.url || '';
+      let names;
+      const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      if (match) {
+        const sheetId = match[1];
+        const isExcel = /rtpof=true/.test(url);
+        const params = new URLSearchParams({ sheetId, namesOnly: '1' });
+        if (isExcel) params.set('excel', '1');
+        const res = await fetch(`/api/sheets?${params}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load sheet names');
+        names = data.sheetNames || [];
+      } else if (/1drv\.ms|onedrive|sharepoint/i.test(url)) {
+        const { sheetNames } = await fetchGoogleSheetRaw(url);
+        names = sheetNames || [];
+      } else if (url) {
+        names = [src.name || 'Data'];
+      } else {
+        throw new Error('No URL configured for this source');
+      }
+      setSourceSheets(p => ({ ...p, [src.id]: { loading: false, error: null, names } }));
+    } catch (err) {
+      setSourceSheets(p => ({ ...p, [src.id]: { loading: false, error: err.message, names: [] } }));
+    }
+  }, []);
+
+  /* ── Step 1: DVL sheet selected ── */
+  const handleDvlSelect = (pick) => {
+    setDvlPick(pick);
     setPageState('select-proj');
   };
 
-  const handleProjSelect = async (sheet) => {
-    setProjSheet(sheet);
-    setPageState('analyzing');
+  /* ── Step 2: Projection sheet selected → fetch data → analyze ── */
+  const handleProjSelect = async (pick) => {
+    setProjPick(pick);
+    setPageState('fetching-data');
     try {
-      const result = await generateValidationDashboard({ dvlSheet, projSheet: sheet });
+      const [dvlRows, projRows] = await Promise.all([
+        fetchSheetRows(dvlPick.sourceUrl, dvlPick.sheetName),
+        fetchSheetRows(pick.sourceUrl, pick.sheetName),
+      ]);
+      if (!dvlRows.length) throw new Error(`No data found in DVL sheet "${dvlPick.sheetName}"`);
+      if (!projRows.length) throw new Error(`No data found in Projection sheet "${pick.sheetName}"`);
+      setPageState('analyzing');
+      const result = await generateValidationDashboard({
+        dvlSheet: { sheetName: dvlPick.sheetName, rows: dvlRows },
+        projSheet: { sheetName: pick.sheetName, rows: projRows },
+      });
       setSpec(result);
       setActiveTab('overview');
       setPageState('ready');
@@ -559,28 +698,22 @@ export default function ValidationDashboardPage() {
   };
 
   const handleReset = () => {
-    setDvlSheet(null);
-    setProjSheet(null);
+    setDvlPick(null);
+    setProjPick(null);
     setSpec(null);
     setPageState('select-dvl');
   };
 
   const TABS = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'protocols', label: 'Protocols' },
-    { id: 'weekly', label: 'Weekly Activity' },
+    { id: 'overview',   label: 'Overview' },
+    { id: 'protocols',  label: 'Protocols' },
+    { id: 'weekly',     label: 'Weekly Activity' },
     { id: 'validation', label: 'Validation' },
   ];
 
-  /* ── Render states ── */
-  if (pageState === 'loading' || pageState === 'fetching') {
-    return (
-      <div style={{ background: P.bg, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
-        <Loader2 size={28} style={{ color: P.green, animation: 'spin 1s linear infinite' }} />
-        <div style={{ fontSize: 13, color: P.faint }}>{pageState === 'fetching' ? 'Loading data sources…' : 'Initializing…'}</div>
-        <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
-      </div>
-    );
+  /* ── Render: transient states ── */
+  if (pageState === 'loading') {
+    return <SpinScreen message="Initializing…" />;
   }
 
   if (pageState === 'no-config') {
@@ -595,7 +728,7 @@ export default function ValidationDashboardPage() {
             Go to Settings → Validation tab and add the data sources containing your DVL and Projection sheets.
           </p>
           {isAdmin && (
-            <button onClick={() => navigate('/settings')} style={{ padding: '10px 20px', borderRadius: 10, background: 'rgba(96,165,250,0.15)', border: '1px solid rgba(96,165,250,0.3)', color: P.blue, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, margin: '0 auto' }}>
+            <button onClick={() => navigate('/settings')} style={{ padding: '10px 20px', borderRadius: 10, background: 'rgba(96,165,250,0.15)', border: '1px solid rgba(96,165,250,0.3)', color: P.blue, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <Settings size={14} /> Open Settings
             </button>
           )}
@@ -620,7 +753,15 @@ export default function ValidationDashboardPage() {
   if (pageState === 'select-dvl') {
     return (
       <div style={{ background: P.bg, flex: 1, overflowY: 'auto' }}>
-        <SelectSheetStep sheets={sheets} onSelect={handleDvlSelect} stepLabel="DVL" stepNum={1} />
+        <SourceSheetPicker
+          sources={sources}
+          sourceSheets={sourceSheets}
+          onLoadSheets={loadSourceSheets}
+          onSelect={handleDvlSelect}
+          stepLabel="DVL"
+          stepNum={1}
+          otherPick={null}
+        />
       </div>
     );
   }
@@ -628,22 +769,29 @@ export default function ValidationDashboardPage() {
   if (pageState === 'select-proj') {
     return (
       <div style={{ background: P.bg, flex: 1, overflowY: 'auto' }}>
-        <SelectSheetStep
-          sheets={sheets.filter(s => !(s.sourceName === dvlSheet.sourceName && s.sheetName === dvlSheet.sheetName))}
+        <SourceSheetPicker
+          sources={sources}
+          sourceSheets={sourceSheets}
+          onLoadSheets={loadSourceSheets}
           onSelect={handleProjSelect}
           stepLabel="Projection"
           stepNum={2}
-          otherLabel={dvlSheet.sheetName}
+          otherPick={dvlPick}
         />
       </div>
     );
   }
 
+  if (pageState === 'fetching-data') {
+    return <SpinScreen message="Loading sheet data…" sub={`DVL: ${dvlPick?.sheetName} · Projection: ${projPick?.sheetName || '…'}`} />;
+  }
+
   if (pageState === 'analyzing') {
     return (
-      <div style={{ background: P.bg, flex: 1 }}>
-        <AnalyzingScreen dvlName={dvlSheet?.sheetName} projName={projSheet?.sheetName} />
-      </div>
+      <SpinScreen
+        message="Analyzing & Validating Data…"
+        sub={`GPT is comparing ${dvlPick?.sheetName} against ${projPick?.sheetName} — checking goals logic, counting visits, identifying discrepancies. This may take 15–30 seconds.`}
+      />
     );
   }
 
@@ -652,24 +800,28 @@ export default function ValidationDashboardPage() {
   return (
     <div style={{ background: P.bg, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {/* Page header */}
-      <div style={{ padding: '16px 20px', borderBottom: `0.5px solid ${P.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0 }}>
+      <div style={{ padding: '14px 20px', borderBottom: `0.5px solid ${P.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
             <ShieldCheck size={16} style={{ color: P.green }} />
             <h1 style={{ fontSize: 16, fontWeight: 600, color: P.ink, letterSpacing: '-0.3px' }}>
               {h.site || 'Validation'} — Data Validation Dashboard
             </h1>
-            <span style={{ fontSize: 11, color: P.green, background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.2)', borderRadius: 20, padding: '2px 8px' }}>
-              {h.period || ''}
-            </span>
+            {h.period && (
+              <span style={{ fontSize: 11, color: P.green, background: 'rgba(74,222,128,0.1)', border: '1px solid rgba(74,222,128,0.2)', borderRadius: 20, padding: '2px 8px' }}>
+                {h.period}
+              </span>
+            )}
           </div>
           <p style={{ fontSize: 12, color: P.faint }}>
-            DVL: <strong style={{ color: P.sub }}>{dvlSheet?.sheetName}</strong>
+            DVL: <strong style={{ color: P.sub }}>{dvlPick?.sheetName}</strong>
             <span style={{ margin: '0 8px', color: P.deep }}>vs</span>
-            Projection: <strong style={{ color: P.sub }}>{projSheet?.sheetName}</strong>
-            <span style={{ marginLeft: 10, color: h.goalsLogic === 'original' ? P.green : P.amber }}>
-              {h.goalsNote}
-            </span>
+            Projection: <strong style={{ color: P.sub }}>{projPick?.sheetName}</strong>
+            {h.goalsNote && (
+              <span style={{ marginLeft: 10, color: h.goalsLogic === 'original' ? P.green : P.amber }}>
+                {h.goalsNote}
+              </span>
+            )}
           </p>
         </div>
         <button onClick={handleReset} title="Reset — re-select sheets" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: `0.5px solid ${P.line}`, color: P.sub, fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>
@@ -678,7 +830,7 @@ export default function ValidationDashboardPage() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 6, padding: '10px 20px', borderBottom: `0.5px solid ${P.line}`, flexShrink: 0, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 4, padding: '10px 20px', borderBottom: `0.5px solid ${P.line}`, flexShrink: 0, flexWrap: 'wrap' }}>
         {TABS.map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
             padding: '6px 16px', borderRadius: 8, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit',
@@ -694,10 +846,10 @@ export default function ValidationDashboardPage() {
 
       {/* Tab content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px', background: P.bg }}>
-        {activeTab === 'overview'    && <OverviewTab   spec={spec} />}
-        {activeTab === 'protocols'   && <ProtocolsTab  spec={spec} piFilter={piFilter} onPIFilter={setPiFilter} />}
-        {activeTab === 'weekly'      && <WeeklyTab     spec={spec} monthFilter={monthFilter} onMonthFilter={setMonthFilter} />}
-        {activeTab === 'validation'  && <ValidationTab spec={spec} />}
+        {activeTab === 'overview'   && <OverviewTab   spec={spec} />}
+        {activeTab === 'protocols'  && <ProtocolsTab  spec={spec} piFilter={piFilter} onPIFilter={setPiFilter} />}
+        {activeTab === 'weekly'     && <WeeklyTab     spec={spec} monthFilter={monthFilter} onMonthFilter={setMonthFilter} />}
+        {activeTab === 'validation' && <ValidationTab spec={spec} />}
       </div>
     </div>
   );

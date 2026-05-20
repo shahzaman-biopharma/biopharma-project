@@ -8,7 +8,7 @@
 import { createSign } from 'crypto';
 import XLSX from 'xlsx';
 
-const MAX_ROWS = 500;
+const MAX_ROWS = 1000;
 
 function makeJWT(sa, scope) {
   const now = Math.floor(Date.now() / 1000);
@@ -75,7 +75,14 @@ export default async function handler(req, res) {
       const arrayBuffer = await driveRes.arrayBuffer();
       const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
       const sheetNames = workbook.SheetNames;
-      const sheets = sheetNames.map(name => ({
+
+      // namesOnly mode — return only sheet names (fast)
+      if (req.query.namesOnly === '1') return res.json({ sheetNames });
+
+      const targetNames = req.query.sheet
+        ? sheetNames.filter(n => n === req.query.sheet)
+        : sheetNames;
+      const sheets = targetNames.map(name => ({
         name,
         rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '' })
           .slice(0, MAX_ROWS + 1),
@@ -106,9 +113,16 @@ export default async function handler(req, res) {
 
     const meta = await metaRes.json();
     const sheetNames = meta.sheets?.map(s => s.properties.title) || [];
+
+    // namesOnly mode — return only sheet names, no data fetch (very fast)
+    if (req.query.namesOnly === '1') return res.json({ sheetNames });
+
+    const targetNames = req.query.sheet
+      ? sheetNames.filter(n => n === req.query.sheet)
+      : sheetNames.slice(0, 10);
     const sheets = [];
 
-    for (const name of sheetNames.slice(0, 10)) {
+    for (const name of targetNames) {
       const valRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(sheetRange(name))}`,
         { headers: { Authorization: `Bearer ${token}` } }

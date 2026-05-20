@@ -110,6 +110,10 @@ async function tryCreate(params) {
       throw new Error('Service is temporarily busy. Please wait a moment and try again.');
     }
 
+    if (response.status === 401) {
+      throw new Error('OpenAI API key is invalid or expired. Go to Vercel → Settings → Environment Variables and update OPENAI_API_KEY, then redeploy.');
+    }
+
     // Any other error
     const errData = await response.json().catch(() => ({}));
     throw new Error(errData?.error?.message || `API error ${response.status}`);
