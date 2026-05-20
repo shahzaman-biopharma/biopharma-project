@@ -20,6 +20,9 @@ export default async function handler(req, res) {
   // Strip any client-sent model — model selection is controlled server-side only
   const { model: _ignored, ...body } = req.body;
 
+  let lastStatus = 503;
+  let lastErrorBody = { error: { message: 'All AI models unavailable. Please try again in a moment.' } };
+
   for (const model of MODELS) {
     let response;
     try {
@@ -43,12 +46,19 @@ export default async function handler(req, res) {
     // 404 / 400 = model not available → try next
     if (response.status === 404 || response.status === 400) continue;
 
-    // 429 or any other error → pass back to client (client handles backoff + retry)
+    // 429 = rate limited → try next model (gpt-4o-mini has ~10x higher rate limits)
+    if (response.status === 429) {
+      lastStatus = 429;
+      lastErrorBody = await response.json().catch(() => ({ error: { message: 'Rate limited' } }));
+      console.warn(`[chat] ${model} rate-limited (429) — trying next model`);
+      continue;
+    }
+
+    // Any other non-retryable error (401, 500, etc.) → pass straight back
     const data = await response.json().catch(() => ({}));
     return res.status(response.status).json(data);
   }
 
-  return res.status(503).json({
-    error: { message: 'AI service temporarily unavailable. Please try again in a moment.' },
-  });
+  // All models exhausted — return last known status (429 if rate-limited, else 503)
+  return res.status(lastStatus).json(lastErrorBody);
 }

@@ -520,14 +520,35 @@ function sheetToText(name, rows, maxRows = 800) {
   const headers = rows[0] || [];
   const data = rows.slice(1, maxRows + 1);
   const truncated = rows.length - 1 > maxRows;
-  return `=== ${name} (${rows.length - 1} data rows${truncated ? `, showing first ${maxRows}` : ''}) ===\n` +
-    headers.join(' | ') + '\n' +
-    data.map(r => headers.map((_, i) => String(r[i] ?? '')).join(' | ')).join('\n');
+
+  // Drop completely empty columns — reduces prompt size significantly
+  const activeCols = headers
+    .map((h, i) => ({ i, h: String(h ?? '') }))
+    .filter(({ i }) => data.some(r => String(r[i] ?? '').trim() !== ''));
+
+  const filteredHeaders = activeCols.map(c => c.h);
+  return `=== ${name} (${rows.length - 1} data rows${truncated ? `, first ${maxRows} shown` : ''}) ===\n` +
+    filteredHeaders.join(' | ') + '\n' +
+    data.map(r => activeCols.map(({ i }) => String(r[i] ?? '')).join(' | ')).join('\n');
 }
 
 export async function generateValidationDashboard({ dvlSheet, projSheet }) {
-  const dvlText  = sheetToText(dvlSheet.sheetName,  dvlSheet.rows,  1000);
-  const projText = sheetToText(projSheet.sheetName, projSheet.rows,  400);
+  // Adaptive row reduction: keep halving DVL rows until total fits in ~80k chars
+  const MAX_COMBINED_CHARS = 80_000;
+  let dvlMaxRows = 500;
+  let projMaxRows = 200;
+  let dvlText  = sheetToText(dvlSheet.sheetName,  dvlSheet.rows,  dvlMaxRows);
+  let projText = sheetToText(projSheet.sheetName, projSheet.rows, projMaxRows);
+
+  while ((dvlText.length + projText.length) > MAX_COMBINED_CHARS && dvlMaxRows > 80) {
+    dvlMaxRows = Math.floor(dvlMaxRows * 0.65);
+    dvlText = sheetToText(dvlSheet.sheetName, dvlSheet.rows, dvlMaxRows);
+    console.warn(`[Validation] Data too large — reducing DVL to ${dvlMaxRows} rows`);
+  }
+
+  console.log(`[Validation] DVL sheet: "${dvlSheet.sheetName}" — total ${dvlSheet.rows.length - 1} rows, sending ${Math.min(dvlMaxRows, dvlSheet.rows.length - 1)} rows, ${dvlText.length.toLocaleString()} chars`);
+  console.log(`[Validation] Proj sheet: "${projSheet.sheetName}" — total ${projSheet.rows.length - 1} rows, sending ${Math.min(projMaxRows, projSheet.rows.length - 1)} rows, ${projText.length.toLocaleString()} chars`);
+  console.log(`[Validation] Combined prompt size: ~${(dvlText.length + projText.length + 2000).toLocaleString()} chars (~${Math.round((dvlText.length + projText.length + 2000) / 4).toLocaleString()} tokens)`);
 
   const prompt = `You are a CRA (Clinical Research Associate) data validation analyst for a biopharma clinical trials site.
 
